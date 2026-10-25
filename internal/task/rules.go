@@ -47,8 +47,9 @@ func FinishArgsError(reason, actor string) error {
 	return fromSpecError(e)
 }
 
+// Finish は、DB から読んだタスク t を完了・中止にする。t が仕様の不変条件（ValidTask）を満たさなければ internal
 func Finish(t Task, o Outcome, reason, actor string, now int64) (Change, error) {
-	st, err := toSpecTask(t)
+	st, err := toValidSpecTask(t)
 	if err != nil {
 		return Change{}, err
 	}
@@ -64,12 +65,26 @@ func Finish(t Task, o Outcome, reason, actor string, now int64) (Change, error) 
 	return Change{task: nt, event: e, isNew: false, fromSpec: true}, nil
 }
 
+// IsVisible は、DB から読んだタスク t を一覧に出すか。t が仕様の不変条件（ValidTask）を満たさなければ internal
 func IsVisible(t Task, includeFinished bool) (bool, error) {
-	st, err := toSpecTask(t)
+	st, err := toValidSpecTask(t)
 	if err != nil {
 		return false, err
 	}
 	return spec.Companion_Default___.IsVisible(st, includeFinished), nil
+}
+
+// toValidSpecTask は、DB から読んだタスクを仕様の値にし、仕様の不変条件を満たすか確かめる。
+// 仕様の証明は、不変条件を満たすタスクを前提にしているため
+func toValidSpecTask(t Task) (spec.Task, error) {
+	st, err := toSpecTask(t)
+	if err != nil {
+		return spec.Task{}, err
+	}
+	if !spec.Companion_Default___.ValidTask(st) {
+		return spec.Task{}, Errorf(CodeInternal, "保存されたタスク %s が仕様の不変条件（タイトルが空でない）を満たさない", t.ID)
+	}
+	return st, nil
 }
 
 func IsBlank(s string) bool {

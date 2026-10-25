@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -144,5 +145,38 @@ func Test登録と完了の日時は現在時刻のミリ秒になる(t *testing
 	evs, _ := s.EventsOf(ctx, tk.ID)
 	if evs[0].At != want || evs[1].At != want+1000 {
 		t.Errorf("events: %+v", evs)
+	}
+}
+
+func Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "quenta.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	// 仕様の関数では作れない、タイトルが空白だけのタスクを、DB に直接入れる
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', ' ', '', 'todo', 1);
+		INSERT INTO events (task_id, actor, to_status, at) VALUES ('0000000a', 's', 'todo', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Finish(ctx, "0000000a", task.OutcomeComplete, "r", "s"); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("完了: %v", err)
+	}
+	for _, inc := range []bool{false, true} {
+		if _, err := a.List(ctx, inc); task.CodeOf(err) != task.CodeInternal {
+			t.Errorf("一覧（includeFinished=%v）: %v", inc, err)
+		}
+	}
+	// 完了は保存していない
+	if evs, _ := s.EventsOf(ctx, "0000000a"); len(evs) != 1 {
+		t.Errorf("イベントが増えた: %+v", evs)
 	}
 }

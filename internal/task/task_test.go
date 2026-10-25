@@ -254,6 +254,18 @@ func ptrEqual[T comparable](a, b *T) bool {
 	return *a == *b
 }
 
+func Test保存されたタスクが不変条件を満たさなければ仕様の関数に渡さずinternalを返す(t *testing.T) {
+	for _, title := range []string{"", " ", "　\n"} {
+		broken := Task{ID: "x", Title: title, Status: StatusTodo}
+		if _, err := Finish(broken, OutcomeComplete, "r", "s", 0); CodeOf(err) != CodeInternal {
+			t.Errorf("Finish(title=%q): %v", title, err)
+		}
+		if _, err := IsVisible(broken, true); CodeOf(err) != CodeInternal {
+			t.Errorf("IsVisible(title=%q): %v", title, err)
+		}
+	}
+}
+
 func Test外で作った状態の変更は仕様の関数が作ったものとして扱われない(t *testing.T) {
 	var c Change
 	if c.FromSpec() {
