@@ -59,8 +59,21 @@ func outcomeStatus(t *testing.T, o Outcome) Status {
 	return ""
 }
 
+// requireAll は、すべての分岐を少なくとも 1 回通ったことを確かめる。
+// 入力の作り方が偏って、確かめたつもりの分岐を一度も通らない、ということがないようにする
+func requireAll(t *testing.T, seen map[string]int, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if seen[k] == 0 {
+			t.Errorf("%s を一度も通っていない（通った分岐: %v）", k, seen)
+		}
+	}
+}
+
 func Test無作為な入力で登録は補題NewTaskResultどおりの結果を返す(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 0))
+	seen := map[string]int{}
+	defer func() { requireAll(t, seen, "session_required", "title_required", "ok") }()
 	for i := range propRuns {
 		id, title, body, actor := fmt.Sprintf("%08x", rng.Uint32()), randomText(rng), randomText(rng), randomText(rng)
 		now := rng.Int64() - rng.Int64()
@@ -68,14 +81,17 @@ func Test無作為な入力で登録は補題NewTaskResultどおりの結果を�
 		desc := fmt.Sprintf("#%d title=%q body=%q actor=%q", i, title, body, actor)
 		switch {
 		case blank(actor):
+			seen["session_required"]++
 			if CodeOf(err) != CodeSessionRequired {
 				t.Fatalf("%s: got %v, want session_required", desc, err)
 			}
 		case blank(title):
+			seen["title_required"]++
 			if CodeOf(err) != CodeTitleRequired {
 				t.Fatalf("%s: got %v, want title_required", desc, err)
 			}
 		default:
+			seen["ok"]++
 			if err != nil {
 				t.Fatalf("%s: %v", desc, err)
 			}
@@ -94,6 +110,10 @@ func Test無作為な入力で登録は補題NewTaskResultどおりの結果を�
 
 func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFinishOneResultどおりの結果を返す(t *testing.T) {
 	rng := rand.New(rand.NewPCG(2, 0))
+	seen := map[string]int{}
+	defer func() {
+		requireAll(t, seen, "session_required", "reason_required", "already_finished:done", "already_finished:canceled", "ok:done", "ok:canceled")
+	}()
 	for i := range propRuns {
 		// DB から読んだタスクは不変条件（タイトルが空でない）を満たす前提なので、タイトルには空白でない文字を必ず含める
 		cur := Task{
@@ -109,14 +129,17 @@ func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFi
 		c, err := Finish(cur, o, reason, actor, now)
 		switch {
 		case blank(actor):
+			seen["session_required"]++
 			if CodeOf(argErr) != CodeSessionRequired || CodeOf(err) != CodeSessionRequired {
 				t.Fatalf("%s: got %v / %v, want session_required", desc, argErr, err)
 			}
 		case blank(reason):
+			seen["reason_required"]++
 			if CodeOf(argErr) != CodeReasonRequired || CodeOf(err) != CodeReasonRequired {
 				t.Fatalf("%s: got %v / %v, want reason_required", desc, argErr, err)
 			}
 		case finished(t, cur.Status):
+			seen["already_finished:"+string(cur.Status)]++
 			if argErr != nil || CodeOf(err) != CodeAlreadyFinished {
 				t.Fatalf("%s: got %v / %v, want nil / already_finished", desc, argErr, err)
 			}
@@ -127,6 +150,7 @@ func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFi
 			// 状態だけが変わり、ID・タイトル・本文・作成日時は変わらない
 			want := cur
 			want.Status = outcomeStatus(t, o)
+			seen["ok:"+string(want.Status)]++
 			if c.Task() != want {
 				t.Fatalf("%s: task got %+v, want %+v", desc, c.Task(), want)
 			}
@@ -143,9 +167,14 @@ func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFi
 
 func Test無作為な入力で一覧に出すかは終わっていないかと指定どおりに決まる(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 0))
+	seen := map[string]int{}
+	defer func() {
+		requireAll(t, seen, "todo:false", "todo:true", "done:false", "done:true", "canceled:false", "canceled:true")
+	}()
 	for i := range propRuns {
 		tk := Task{ID: "x", Title: randomText(rng) + "t", Status: propStatuses[rng.IntN(len(propStatuses))]}
 		inc := rng.IntN(2) == 0
+		seen[fmt.Sprintf("%s:%v", tk.Status, inc)]++
 		got, err := IsVisible(tk, inc)
 		if want := inc || !finished(t, tk.Status); err != nil || got != want {
 			t.Fatalf("#%d status=%s includeFinished=%v: got %v, %v, want %v", i, tk.Status, inc, got, err, want)
