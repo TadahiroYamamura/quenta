@@ -50,6 +50,25 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_task_id ON events(task_id);
 
+-- 以下のトリガーは、仕様の手本（Add・FinishTask）でしか証明できない性質を、DB の制約として守る（spec/task.dfy の保証の対応表）。
+-- タスクは消えない（TasksNeverDisappear）。recursive_triggers を有効にして開くので、上書き（INSERT OR REPLACE）による削除でも起動する
+CREATE TRIGGER IF NOT EXISTS tasks_no_delete BEFORE DELETE ON tasks
+BEGIN SELECT RAISE(ABORT, 'tasks の行は削除できない'); END;
+-- このストーリーで書き換える列は状態だけ。値を比べるのは、状態以外の列を同じ値で書く UPDATE を妨げないため。
+-- 列を足したら、ここにも足す
+CREATE TRIGGER IF NOT EXISTS tasks_only_status_changes BEFORE UPDATE ON tasks
+WHEN NEW.seq IS NOT OLD.seq OR NEW.id IS NOT OLD.id OR NEW.title IS NOT OLD.title
+  OR NEW.body IS NOT OLD.body OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'tasks の状態以外の列は書き換えられない'); END;
+-- 終わったタスクは変わらない（FinishRejectsFinished）。仕様の IsFinished が終わったとする状態を列挙している。状態を足したら、ここも見直す
+CREATE TRIGGER IF NOT EXISTS tasks_finished_frozen BEFORE UPDATE ON tasks
+WHEN OLD.status IN ('done', 'canceled')
+BEGIN SELECT RAISE(ABORT, '終わったタスクは書き換えられない'); END;
+-- イベントは追記だけ（EventsAppendOnly）
+CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'events の行は書き換えられない'); END;
+CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events の行は削除できない'); END;
 `
 
 type Store struct {
@@ -64,6 +83,8 @@ func Open(path string) (*Store, error) {
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
+	// 上書き（INSERT OR REPLACE）による削除でも、削除を拒むトリガーを起動させる
+	q.Add("_pragma", "recursive_triggers(1)")
 	// 読んでから書くトランザクション（完了・中止）で、読んだ後に別の書き手に割り込まれないようにする
 	q.Add("_txlock", "immediate")
 	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())

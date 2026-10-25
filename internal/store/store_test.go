@@ -288,6 +288,134 @@ func Test一覧は作成日時の古い順で作成日時が同じなら登録�
 	}
 }
 
+// ---------- DB の制約（spec/task.dfy の保証の対応表で「DB の制約」としたもの） ----------
+
+// snapshotRows は、tasks と events の全行を、登録した順・記録した順の番号も含めて返す
+func snapshotRows(t *testing.T, s *Store) []string {
+	t.Helper()
+	var out []string
+	for _, q := range []string{
+		`SELECT seq || '|' || id || '|' || title || '|' || body || '|' || status || '|' || created_at FROM tasks ORDER BY seq`,
+		`SELECT seq || '|' || task_id || '|' || actor || '|' || IFNULL(from_status, '-') || '|' || to_status || '|' || IFNULL(reason, '-') || '|' || at FROM events ORDER BY seq`,
+	} {
+		rows, err := s.db.Query(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var r string
+			if err := rows.Scan(&r); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		rows.Close()
+	}
+	return out
+}
+
+func assertRejected(t *testing.T, s *Store, before []string, stmts ...string) {
+	t.Helper()
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err == nil {
+			t.Errorf("拒まれなかった: %s", q)
+		}
+	}
+	if after := snapshotRows(t, s); !equalStrings(after, before) {
+		t.Errorf("行が変わった:\n前 %v\n後 %v", before, after)
+	}
+}
+
+func Testタスクは削除できない(t *testing.T) {
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "", "s", 1)
+	add(t, s, "0000000b", "b", "", "s", 2)
+	// 登録のイベントがあるタスクは、外部キーの制約でも削除を拒まれる。
+	// トリガーだけで拒むことを確かめるため、イベントのないタスクも直接入れる
+	if _, err := s.db.Exec(`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0000000c', 'c', '', 'todo', 3)`); err != nil {
+		t.Fatal(err)
+	}
+	assertRejected(t, s, snapshotRows(t, s),
+		`DELETE FROM tasks WHERE id = '0000000c'`,
+		`DELETE FROM tasks WHERE id = '0000000a'`,
+		`DELETE FROM tasks`,
+	)
+}
+
+func Test上書きで保存しようとすると拒まれる(t *testing.T) {
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "本文", "s", 1)
+	assertRejected(t, s, snapshotRows(t, s),
+		// 削除してから入れ直す形の上書き（登録した順も変わる）
+		`INSERT OR REPLACE INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)`,
+		`REPLACE INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)`,
+		// 書き換える形の上書き
+		`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)
+		 ON CONFLICT(id) DO UPDATE SET title = excluded.title`,
+	)
+}
+
+func Testタスクの状態以外の列は書き換えられない(t *testing.T) {
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "本文", "s", 1)
+	assertRejected(t, s, snapshotRows(t, s),
+		`UPDATE tasks SET id = '0000000z' WHERE id = '0000000a'`,
+		`UPDATE tasks SET title = '別' WHERE id = '0000000a'`,
+		`UPDATE tasks SET body = '別' WHERE id = '0000000a'`,
+		`UPDATE tasks SET created_at = 99 WHERE id = '0000000a'`,
+		`UPDATE tasks SET seq = 99 WHERE id = '0000000a'`,
+	)
+	// 状態以外の列を同じ値で書き、状態を変える UPDATE は通る（完了・中止を妨げない）
+	if _, err := s.db.Exec(`UPDATE tasks SET title = 'a', body = '本文', status = 'done' WHERE id = '0000000a'`); err != nil {
+		t.Errorf("状態の書き換えが拒まれた: %v", err)
+	}
+}
+
+func Test終わったタスクは書き換えられない(t *testing.T) {
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "", "s", 1)
+	add(t, s, "0000000b", "b", "", "s", 1)
+	if _, err := finish(s, "0000000a", task.OutcomeComplete, "r", "s", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finish(s, "0000000b", task.OutcomeCancel, "r", "s", 2); err != nil {
+		t.Fatal(err)
+	}
+	assertRejected(t, s, snapshotRows(t, s),
+		`UPDATE tasks SET status = 'todo' WHERE id = '0000000a'`,
+		`UPDATE tasks SET status = 'canceled' WHERE id = '0000000a'`,
+		`UPDATE tasks SET status = 'todo' WHERE id = '0000000b'`,
+		`UPDATE tasks SET status = 'done' WHERE id = '0000000b'`,
+	)
+}
+
+func Testイベントは書き換えも削除もできない(t *testing.T) {
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "", "s", 1)
+	if _, err := finish(s, "0000000a", task.OutcomeComplete, "r", "s", 2); err != nil {
+		t.Fatal(err)
+	}
+	assertRejected(t, s, snapshotRows(t, s),
+		`UPDATE events SET reason = '別' WHERE task_id = '0000000a'`,
+		`UPDATE events SET actor = '別'`,
+		`DELETE FROM events WHERE task_id = '0000000a'`,
+		`DELETE FROM events`,
+		`INSERT OR REPLACE INTO events (seq, task_id, actor, to_status, at) VALUES (1, '0000000a', '別', 'todo', 1)`,
+	)
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func Test閉じて開き直しても保存したタスクとイベントが残っている(t *testing.T) {
 	ctx := context.Background()
 	s, path := openTemp(t)
