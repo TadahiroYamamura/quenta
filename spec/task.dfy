@@ -113,7 +113,7 @@ module Quenta {
   }
 
   // 1 件のタスクの不変条件: タイトルが空でない
-  // 重要度: 中。守るもの: 証明（NewTaskResult・FinishOneResult）と、DB から読んだときの確認。
+  // 重要度: 中。守るもの: 証明（NewTask・Finish。補題 NewTaskResult・FinishOneResult）と、DB から読んだときの確認（実装が ValidTask を呼ぶ）。
   // 根拠: 実装が保存するタスクは、NewTask か Finish が返したものだけ。DB から読んだタスクは、Finish・IsVisible に渡す前に、
   // 実装がこの述語で確かめ、満たさなければ internal のエラーにする（テスト: Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す）
   predicate ValidTask(t: Task)
@@ -174,7 +174,8 @@ module Quenta {
   // - ID・作成日時を書き換えない、イベントを消さず書き換えない: DB の制約（tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）、
   //   events の書き換え・削除を拒むトリガー（events_no_update・events_no_delete））
   // - タスクの状態の書き換えには、必ず対応するイベントが伴う: Go の作りとテスト。
-  //   Go の作り: 保存の層が受け取るのは、Finish・NewTask が返したタスクとイベントの組（状態の変更）だけで、その値は仕様の関数の結果からしか作れない。
+  //   Go の作り: 保存の層が受け取るのは、Finish・NewTask が返したタスクとイベントの組（状態の変更）だけで、その値は、変換用のパッケージの外からは
+  //   仕様の関数の結果からしか作れない。
   //   tasks と events に書き込むのは保存の層の 1 つの関数だけで、組を 1 つのトランザクションで続けて書く。
   //   テスト: Test無作為な操作の列で…（毎歩、実装の状態に Valid を当てる）、Testイベントを保存できなければタスクの変更も残らない、
   //   Test登録のイベントを保存できなければタスクも残らない、Test仕様の関数が作っていない状態の変更や別のタスクの変更は保存しない。
@@ -373,10 +374,10 @@ module Quenta {
   // 全体の不変条件。条件ごとの守り方:
   // - UniqueIds: 上の UniqueIds のコメントを参照
   // - タイトルが空でない: ValidTask のコメントを参照
-  // - イベントの形が正しい（重要度: 高）: 証明（NewTaskResult・FinishOneResult）。実装が保存するイベントは NewTask か Finish が返したものだけ
+  // - イベントの形が正しい（重要度: 高）: 証明（NewTask・Finish。補題 NewTaskResult・FinishOneResult）。実装が保存するイベントは NewTask か Finish が返したものだけ
   // - イベントの対象のタスクがある（重要度: 高）: DB の制約（events.task_id の外部キー）。
   //   テスト: Test存在しないタスクを指すイベントは外部キーの制約で保存できない
-  // - タスクの経緯が正しい（重要度: 高）: 証明（NewTaskResult は登録のイベントだけで経緯が正しいこと、
+  // - タスクの経緯が正しい（重要度: 高）: 証明（NewTask・Finish。補題 NewTaskResult は登録のイベントだけで経緯が正しいこと、
   //   FinishOneResult は正しい経緯にイベントを足しても正しいこと）と、DB の制約（イベントは追記だけ、EventsAppendOnly を参照）。
   //   状態の書き換えに必ずイベントが伴うことは、Go の作りとテストで守る（FinishOneResult のコメントを参照。人が了承した）
   // 実装の状態でこの不変条件が成り立つことは、テスト（Test無作為な操作の列で…）でも、実装から読み出した状態に Valid を当てて確かめる。
@@ -487,7 +488,7 @@ module Quenta {
 
   // 登録の結果（手本）: 登録したタスクとイベントが末尾に 1 件ずつ増え、既存のものは変わらない
   // 重要度: 高（既存のタスクが書き換わるとデータが壊れる）。
-  // 守るもの: 証明（NewTaskResult。足すタスクとイベントの中身）、DB の制約（tasks.id の一意の制約は同じ ID の 2 件目を拒む。
+  // 守るもの: 証明（NewTask。補題 NewTaskResult。足すタスクとイベントの中身）、DB の制約（tasks.id の一意の制約は同じ ID の 2 件目を拒む。
   // 上書き（INSERT OR REPLACE）による削除は、tasks の削除を拒むトリガー（tasks_no_delete。recursive_triggers を有効にして、上書きによる削除でも起動させる）が拒む。
   // UPDATE による上書きは、tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）が拒む）、テスト（Test上書きで保存しようとすると拒まれる）。
   // todo のタスクの状態の書き換えは、トリガーでは拒めない（終わったタスクは FinishRejectsFinished のトリガーが拒む）。FinishOneResult のコメントの「状態の書き換えには、必ず対応するイベントが伴う」の
@@ -503,7 +504,7 @@ module Quenta {
   }
 
   // 登録のエラーの条件（手本）。主体 → タイトル → ID の重なりの順に判定する
-  // 重要度: 中。守るもの: 証明（NewTaskResult。主体とタイトル）と、ID の重なりは UniqueIds のコメントを参照
+  // 重要度: 中。守るもの: 証明（NewTask。補題 NewTaskResult。主体とタイトル）と、ID の重なりは UniqueIds のコメントを参照
   lemma AddErrors(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis)
     ensures IsBlank(actor) ==> Add(st, id, title, body, actor, now) == Err(SessionRequired)
     ensures !IsBlank(actor) && IsBlank(title) ==> Add(st, id, title, body, actor, now) == Err(TitleRequired)
@@ -514,8 +515,9 @@ module Quenta {
 
   // 完了・中止の結果（手本）: 対象のタスクだけが変わり、イベントが末尾に 1 件増える
   // 重要度: 高（ほかのタスクが書き換わるとデータが壊れる）。
-  // 守るもの: 証明（FinishOneResult。対象の変わり方とイベントの中身）、DB の制約（tasks.id の一意の制約）、テスト（ほかのタスクが変わらないこと）。
+  // 守るもの: 証明（Finish。補題 FinishOneResult。対象の変わり方とイベントの中身）、DB の制約（tasks.id の一意の制約）、テスト（ほかのタスクが変わらないこと）。
   // 根拠: 実装は FinishTask を通らず、ID を条件に 1 行だけ書き換える。ID は一意の制約で重ならないので、条件に合うのは 1 行だけ。
+  // 実装は、書き換えた行がちょうど 1 行であることを実行時に確かめ、違えばエラーにしてトランザクションを取り消す。
   // 「ID を条件にする」ことは Go と SQL にあり、テストで守る（2026-10-25 の仕様のレビューで、人が了承した）。条件が外れても、終わったタスクへの書き換えは
   // 終わったタスクの書き換えを拒むトリガー（tasks_finished_frozen）が拒む。
   // テスト: Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）。変異テスト: 書き換えの条件を外すと AC04・05・06・10 ほかが落ちることを確かめた
@@ -535,7 +537,7 @@ module Quenta {
   }
 
   // 完了・中止のエラーの条件（手本）。主体 → 理由 → ID の有無 → 終わっているか、の順に判定する
-  // 重要度: 中（受け入れ条件 9〜11）。守るもの: 証明（FinishArgsErrorResult・FinishOneResult）とテスト。
+  // 重要度: 中（受け入れ条件 9〜11）。守るもの: 証明（FinishArgsError・Finish。補題 FinishArgsErrorResult・FinishOneResult）とテスト。
   // 根拠: 引数の判定と、終わっているかの判定は、実装が呼ぶ関数にある。引数の判定をタスクを探す前に行う順と、
   // ID がなければ NotFound を返すことは、Go と SQL で行うのでテストで守る。
   // テスト: Test完了と中止は引数の誤りをタスクを探す前に返す、Test存在しないIDを読むとnot_foundを返す、Test無作為な操作の列で…。
@@ -591,10 +593,15 @@ module Quenta {
   }
 
   // イベントは追記だけ（手本）: 登録でも完了・中止でも、既存のイベントは消えず書き換わらず、末尾に 1 件増える
-  // 重要度: 高（経緯を残す）。守るもの: 既存のイベントが消えず書き換わらないことは DB の制約（events の書き換えと削除を拒むトリガー（events_no_update・events_no_delete））、
-  // 末尾に 1 件増えることはテスト。
-  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testイベントは書き換えも削除もできない、
-  // Test無作為な操作の列で…（毎歩、それまでのイベントが先頭にそのまま残ることを確かめる）
+  // 重要度: 高（経緯を残す）。守り方は部分ごとに分かれる。
+  // - 既存のイベントが消えず書き換わらない: DB の制約（events の書き換えと削除を拒むトリガー（events_no_update・events_no_delete））。
+  //   テスト: Testイベントは書き換えも削除もできない
+  // - 末尾に足される: DB の制約（events.seq は AUTOINCREMENT で、記録した順の番号は増える一方）
+  // - 1 回の操作で 1 件だけ足される: Go の作り（tasks と events に書き込むのは保存の層の 1 つの関数だけで、イベントを 1 件だけ書く）とテスト。
+  //   テスト: Test無作為な操作の列で…（毎歩、イベントの数と中身を手本と比べ、それまでのイベントが先頭にそのまま残ることを確かめる）。
+  //   変異テスト: 完了・中止でイベントを 2 件書くよう壊すと、AC07・AC08・Test無作為な操作の列で… ほかが落ちることを確かめた。
+  //   重要度 高をテストで守る部分（2026-10-25、「状態の書き換えに必ずイベントが伴う」の了承に含めることを人が了承した）
+  // 根拠: 実装は Add・FinishTask を通らない
   lemma EventsAppendOnly(st: State, id: string, title: string, body: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures Add(st, id, title, body, actor, now).Ok? ==>
       var ev := Add(st, id, title, body, actor, now).value.events;
