@@ -458,6 +458,8 @@ module Quenta {
       (forall t :: t in r ==> t in st.tasks && IsVisible(t, includeFinished))
       && (forall t :: t in st.tasks && IsVisible(t, includeFinished) ==> t in r)
       && (forall i, j :: 0 <= i < j < |r| ==> r[i].createdAt <= r[j].createdAt)
+      && (forall i, j :: 0 <= i < j < |r| && r[i].createdAt == r[j].createdAt ==>
+            exists p, q :: 0 <= p < q < |st.tasks| && st.tasks[p] == r[i] && st.tasks[q] == r[j])
       && (forall i, j :: 0 <= i < j < |r| ==> r[i].id != r[j].id)
   {
     var picked := Pick(st.tasks, includeFinished, 0);
@@ -479,6 +481,14 @@ module Quenta {
     }
     forall i, j | 0 <= i < j < |r| ensures r[i].createdAt <= r[j].createdAt {
       assert Before(sorted[i], sorted[j]);
+    }
+    forall i, j | 0 <= i < j < |r| && r[i].createdAt == r[j].createdAt
+      ensures exists p, q :: 0 <= p < q < |st.tasks| && st.tasks[p] == r[i] && st.tasks[q] == r[j]
+    {
+      assert Before(sorted[i], sorted[j]);
+      assert sorted[i] in picked && sorted[j] in picked;
+      var p, q := sorted[i].0, sorted[j].0;
+      assert st.tasks[p] == r[i] && st.tasks[q] == r[j];
     }
     forall i, j | 0 <= i < j < |r| ensures r[i].id != r[j].id {
       assert Before(sorted[i], sorted[j]);
