@@ -99,7 +99,7 @@ func Test未知の状態はDafnyの値に変換できずエラーになる(t *te
 }
 
 func Test未知の終わらせ方は完了にも中止にもできずエラーになる(t *testing.T) {
-	_, _, err := Finish(Task{ID: "x", Title: "t", Status: StatusTodo}, Outcome(99), "r", "s", 0)
+	_, err := Finish(Task{ID: "x", Title: "t", Status: StatusTodo}, Outcome(99), "r", "s", 0)
 	if err == nil {
 		t.Error("エラーにならなかった")
 	}
@@ -136,7 +136,7 @@ func Test登録は仕様の判定どおりのエラーコードを返す(t *test
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, _, err := NewTask("0a1b2c3d", c.title, "", c.actor, 0)
+			_, err := NewTask("0a1b2c3d", c.title, "", c.actor, 0)
 			if got := CodeOf(err); got != c.want {
 				t.Errorf("got %s (%v), want %s", got, err, c.want)
 			}
@@ -145,10 +145,14 @@ func Test登録は仕様の判定どおりのエラーコードを返す(t *test
 }
 
 func Test登録はtodoのタスクと変更前のない登録のイベントを返す(t *testing.T) {
-	tk, ev, err := NewTask("0a1b2c3d", " タイトル ", "本文", "s1", 42)
+	c, err := NewTask("0a1b2c3d", " タイトル ", "本文", "s1", 42)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !c.IsNew() || !c.FromSpec() {
+		t.Errorf("IsNew=%v FromSpec=%v", c.IsNew(), c.FromSpec())
+	}
+	tk, ev := c.Task(), c.Event()
 	// 前後の空白を削らずに保存する
 	if want := (Task{ID: "0a1b2c3d", Title: " タイトル ", Body: "本文", Status: StatusTodo, CreatedAt: 42}); tk != want {
 		t.Errorf("task: got %+v, want %+v", tk, want)
@@ -177,7 +181,7 @@ func Test完了と中止は仕様の判定どおりのエラーコードを返�
 	for _, c := range cases {
 		for _, o := range []Outcome{OutcomeComplete, OutcomeCancel} {
 			t.Run(c.name, func(t *testing.T) {
-				_, _, err := Finish(c.task, o, c.reason, c.actor, 0)
+				_, err := Finish(c.task, o, c.reason, c.actor, 0)
 				if got := CodeOf(err); got != c.want {
 					t.Errorf("outcome %d: got %s (%v), want %s", o, got, err, c.want)
 				}
@@ -200,10 +204,14 @@ func Test完了はdoneに中止はcanceledにしイベントに変更前と理�
 		{OutcomeCancel, StatusCanceled},
 	}
 	for _, c := range cases {
-		tk, ev, err := Finish(Task{ID: "x", Title: "t", Body: "b", Status: StatusTodo, CreatedAt: 1}, c.o, reason, "s2", 9)
+		ch, err := Finish(Task{ID: "x", Title: "t", Body: "b", Status: StatusTodo, CreatedAt: 1}, c.o, reason, "s2", 9)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if ch.IsNew() || !ch.FromSpec() {
+			t.Errorf("IsNew=%v FromSpec=%v", ch.IsNew(), ch.FromSpec())
+		}
+		tk, ev := ch.Task(), ch.Event()
 		if want := (Task{ID: "x", Title: "t", Body: "b", Status: c.want, CreatedAt: 1}); tk != want {
 			t.Errorf("task: got %+v, want %+v", tk, want)
 		}
@@ -223,11 +231,11 @@ func Test一覧には既定で終わっていないタスクだけを出し指�
 		{StatusCanceled, false, true},
 	}
 	for _, c := range cases {
-		got, err := IsVisible(Task{Status: c.s}, false)
+		got, err := IsVisible(Task{Title: "t", Status: c.s}, false)
 		if err != nil || got != c.def {
 			t.Errorf("%s 既定: got %v, %v", c.s, got, err)
 		}
-		got, err = IsVisible(Task{Status: c.s}, true)
+		got, err = IsVisible(Task{Title: "t", Status: c.s}, true)
 		if err != nil || got != c.withFinished {
 			t.Errorf("%s 全部: got %v, %v", c.s, got, err)
 		}
@@ -244,4 +252,11 @@ func ptrEqual[T comparable](a, b *T) bool {
 		return a == nil && b == nil
 	}
 	return *a == *b
+}
+
+func Test外で作った状態の変更は仕様の関数が作ったものとして扱われない(t *testing.T) {
+	var c Change
+	if c.FromSpec() {
+		t.Error("ゼロ値が FromSpec を true にした")
+	}
 }

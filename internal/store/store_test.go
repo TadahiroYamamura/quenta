@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/TadahiroYamamura/quenta/internal/task"
@@ -21,11 +23,27 @@ func openTemp(t *testing.T) (*Store, string) {
 	return s, path
 }
 
-func ptr[T any](v T) *T { return &v }
-
-func registration(t task.Task, actor string) task.Event {
-	return task.Event{TaskID: t.ID, Actor: actor, To: task.StatusTodo, At: t.CreatedAt}
+// add は、仕様の NewTask で作った登録の状態の変更を保存する
+func add(t *testing.T, s *Store, id, title, body, actor string, now int64) task.Task {
+	t.Helper()
+	c, err := task.NewTask(id, title, body, actor, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertTask(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	return c.Task()
 }
+
+// finish は、仕様の Finish で id のタスクを完了・中止にする
+func finish(s *Store, id string, o task.Outcome, reason, actor string, now int64) (task.Task, error) {
+	return s.UpdateTask(context.Background(), id, func(cur task.Task) (task.Change, error) {
+		return task.Finish(cur, o, reason, actor, now)
+	})
+}
+
+func ptr[T any](v T) *T { return &v }
 
 func TestDefaultPathはXDG_DATA_HOMEが絶対パスならその下を使い無ければHOMEの下を使う(t *testing.T) {
 	cases := []struct {
@@ -60,21 +78,14 @@ func Test保存したタスクとイベントは読み出しても値が変わ�
 	var want []task.Task
 	var wantEvents []task.Event
 	for i, text := range texts {
-		tk := task.Task{ID: string(rune('a'+i)) + "0000000", Title: text, Body: text, Status: task.StatusTodo, CreatedAt: times[i]}
-		ev := registration(tk, text+"actor")
-		if err := s.InsertTask(ctx, tk, ev); err != nil {
-			t.Fatal(err)
-		}
+		id := string(rune('a'+i)) + "0000000"
+		tk := add(t, s, id, "t"+text, text, "actor"+text, times[i])
 		want = append(want, tk)
-		wantEvents = append(wantEvents, ev)
+		wantEvents = append(wantEvents, task.Event{TaskID: id, Actor: "actor" + text, To: task.StatusTodo, At: times[i]})
 	}
 	// 変更前・理由のあるイベントも往復させる
 	reason := "理由🎉"
-	finished, err := s.UpdateTask(ctx, want[0].ID, func(cur task.Task) (task.Task, task.Event, error) {
-		next := cur
-		next.Status = task.StatusCanceled
-		return next, task.Event{TaskID: cur.ID, Actor: "s", From: ptr(task.StatusTodo), To: task.StatusCanceled, Reason: &reason, At: math.MinInt64}, nil
-	})
+	finished, err := finish(s, want[0].ID, task.OutcomeCancel, reason, "s", math.MinInt64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,12 +132,12 @@ func Test保存したタスクとイベントは読み出しても値が変わ�
 func Test既にあるIDで保存しようとするとid_conflictを返し既存のタスクもイベントも変わらない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
-	orig := task.Task{ID: "0a1b2c3d", Title: "元", Body: "元の本文", Status: task.StatusTodo, CreatedAt: 1}
-	if err := s.InsertTask(ctx, orig, registration(orig, "s1")); err != nil {
+	orig := add(t, s, "0a1b2c3d", "元", "元の本文", "s1", 1)
+	dup, err := task.NewTask("0a1b2c3d", "後", "後の本文", "s2", 2)
+	if err != nil {
 		t.Fatal(err)
 	}
-	dup := task.Task{ID: "0a1b2c3d", Title: "後", Body: "後の本文", Status: task.StatusTodo, CreatedAt: 2}
-	err := s.InsertTask(ctx, dup, registration(dup, "s2"))
+	err = s.InsertTask(ctx, dup)
 	if got := task.CodeOf(err); got != task.CodeIDConflict {
 		t.Fatalf("got %s (%v), want id_conflict", got, err)
 	}
@@ -143,13 +154,10 @@ func Test既にあるIDで保存しようとするとid_conflictを返し既存�
 func Test変更がエラーを返すとタスクもイベントも保存しない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
-	orig := task.Task{ID: "0a1b2c3d", Title: "t", Status: task.StatusTodo, CreatedAt: 1}
-	if err := s.InsertTask(ctx, orig, registration(orig, "s1")); err != nil {
-		t.Fatal(err)
-	}
+	orig := add(t, s, "0a1b2c3d", "t", "", "s1", 1)
 	boom := task.Errorf(task.CodeAlreadyFinished, "x")
-	_, err := s.UpdateTask(ctx, orig.ID, func(cur task.Task) (task.Task, task.Event, error) {
-		return task.Task{}, task.Event{}, boom
+	_, err := s.UpdateTask(ctx, orig.ID, func(cur task.Task) (task.Change, error) {
+		return task.Change{}, boom
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
@@ -161,25 +169,84 @@ func Test変更がエラーを返すとタスクもイベントも保存しな�
 	}
 }
 
+// failEventsBy は、主体が actor のイベントの保存を失敗させるトリガーを、テストの DB に置く
+func failEventsBy(t *testing.T, s *Store, actor string) {
+	t.Helper()
+	if _, err := s.db.Exec(`CREATE TRIGGER test_fail_event BEFORE INSERT ON events WHEN NEW.actor = '` + actor + `'
+		BEGIN SELECT RAISE(ABORT, 'テストで失敗させた'); END`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func Testイベントを保存できなければタスクの変更も残らない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
-	orig := task.Task{ID: "0a1b2c3d", Title: "t", Status: task.StatusTodo, CreatedAt: 1}
-	if err := s.InsertTask(ctx, orig, registration(orig, "s1")); err != nil {
-		t.Fatal(err)
-	}
-	// 存在しないタスクを指すイベントは外部キーの制約で保存できない
-	_, err := s.UpdateTask(ctx, orig.ID, func(cur task.Task) (task.Task, task.Event, error) {
-		next := cur
-		next.Status = task.StatusDone
-		return next, task.Event{TaskID: "ffffffff", Actor: "s", From: ptr(task.StatusTodo), To: task.StatusDone, Reason: ptr("r"), At: 2}, nil
-	})
-	if err == nil {
+	orig := add(t, s, "0a1b2c3d", "t", "", "s1", 1)
+	failEventsBy(t, s, "boom")
+	if _, err := finish(s, orig.ID, task.OutcomeComplete, "r", "boom", 2); err == nil {
 		t.Fatal("エラーにならなかった")
 	}
 	got, _ := s.GetTask(ctx, orig.ID)
-	if got != orig {
-		t.Errorf("タスクが変わった: %+v", got)
+	evs, _ := s.AllEvents(ctx)
+	if got != orig || len(evs) != 1 {
+		t.Errorf("変わった: %+v %+v", got, evs)
+	}
+}
+
+func Test登録のイベントを保存できなければタスクも残らない(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	failEventsBy(t, s, "boom")
+	c, err := task.NewTask("0a1b2c3d", "t", "", "boom", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertTask(ctx, c); err == nil {
+		t.Fatal("エラーにならなかった")
+	}
+	all, _ := s.AllTasks(ctx)
+	if len(all) != 0 {
+		t.Errorf("タスクが残った: %+v", all)
+	}
+}
+
+func Test存在しないタスクを指すイベントは外部キーの制約で保存できない(t *testing.T) {
+	s, _ := openTemp(t)
+	_, err := s.db.Exec(`INSERT INTO events (task_id, actor, to_status, at) VALUES ('ffffffff', 's', 'todo', 1)`)
+	if err == nil {
+		t.Error("保存できてしまった")
+	}
+}
+
+func Test仕様の関数が作っていない状態の変更や別のタスクの変更は保存しない(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	a := add(t, s, "0000000a", "a", "", "s", 1)
+	b := add(t, s, "0000000b", "b", "", "s", 1)
+
+	// 登録でない状態の変更を、登録として保存しない
+	other, err := task.Finish(a, task.OutcomeComplete, "r", "s", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertTask(ctx, other); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("InsertTask(完了の変更): %v", err)
+	}
+	// b の変更として、a の完了を保存しない
+	if _, err := s.UpdateTask(ctx, b.ID, func(task.Task) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("UpdateTask(別のタスクの変更): %v", err)
+	}
+	// 外で作った値（ゼロ値）は、SQL を実行する前に、仕様の関数が作った値でないことを理由に拒む
+	err = s.inTx(ctx, func(tx *sql.Tx) error { return save(ctx, tx, task.Change{}) })
+	if te, ok := errors.AsType[*task.Error](err); !ok || te.Code != task.CodeInternal || !strings.Contains(te.Message, "仕様の関数が作っていない") {
+		t.Errorf("save(ゼロ値): %v", err)
+	}
+	all, _ := s.AllTasks(ctx)
+	if len(all) != 2 || all[0] != a || all[1] != b {
+		t.Errorf("変わった: %+v", all)
+	}
+	if evs, _ := s.AllEvents(ctx); len(evs) != 2 {
+		t.Errorf("イベントが増えた: %+v", evs)
 	}
 }
 
@@ -190,9 +257,9 @@ func Test存在しないIDを読むとnot_foundを返す(t *testing.T) {
 		t.Errorf("GetTask: %v", err)
 	}
 	called := false
-	_, err := s.UpdateTask(ctx, "ffffffff", func(cur task.Task) (task.Task, task.Event, error) {
+	_, err := s.UpdateTask(ctx, "ffffffff", func(cur task.Task) (task.Change, error) {
 		called = true
-		return cur, task.Event{}, nil
+		return task.Change{}, nil
 	})
 	if task.CodeOf(err) != task.CodeNotFound || called {
 		t.Errorf("UpdateTask: %v, called=%v", err, called)
@@ -203,17 +270,11 @@ func Test一覧は作成日時の古い順で作成日時が同じなら登録�
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	// 登録した順と作成日時の順をずらし、同じ作成日時も混ぜる
-	in := []task.Task{
-		{ID: "00000001", Title: "a", Status: task.StatusTodo, CreatedAt: 30},
-		{ID: "00000002", Title: "b", Status: task.StatusTodo, CreatedAt: 10},
-		{ID: "00000003", Title: "c", Status: task.StatusTodo, CreatedAt: 30},
-		{ID: "00000004", Title: "d", Status: task.StatusTodo, CreatedAt: 20},
-		{ID: "00000005", Title: "e", Status: task.StatusTodo, CreatedAt: 10},
-	}
-	for _, tk := range in {
-		if err := s.InsertTask(ctx, tk, registration(tk, "s")); err != nil {
-			t.Fatal(err)
-		}
+	for _, x := range []struct {
+		id string
+		at int64
+	}{{"00000001", 30}, {"00000002", 10}, {"00000003", 30}, {"00000004", 20}, {"00000005", 10}} {
+		add(t, s, x.id, "t", "", "s", x.at)
 	}
 	got, err := s.ListTasks(ctx)
 	if err != nil {
@@ -230,10 +291,7 @@ func Test一覧は作成日時の古い順で作成日時が同じなら登録�
 func Test閉じて開き直しても保存したタスクとイベントが残っている(t *testing.T) {
 	ctx := context.Background()
 	s, path := openTemp(t)
-	tk := task.Task{ID: "0a1b2c3d", Title: "t", Status: task.StatusTodo, CreatedAt: 1}
-	if err := s.InsertTask(ctx, tk, registration(tk, "s")); err != nil {
-		t.Fatal(err)
-	}
+	tk := add(t, s, "0a1b2c3d", "t", "", "s", 1)
 	s.Close()
 	s2, err := Open(path)
 	if err != nil {

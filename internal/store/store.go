@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS events (
 	at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_task_id ON events(task_id);
+
 `
 
 type Store struct {
@@ -78,9 +79,46 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// InsertTask は、タスクとその登録のイベントを保存する。ID が既にあれば id_conflict を返し、何も保存しない
-func (s *Store) InsertTask(ctx context.Context, t task.Task, e task.Event) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+// InsertTask は、登録の状態の変更（新しいタスクとその登録のイベント）を保存する。ID が既にあれば id_conflict を返し、何も保存しない
+func (s *Store) InsertTask(ctx context.Context, c task.Change) error {
+	if !c.IsNew() {
+		return task.Errorf(task.CodeInternal, "登録でない状態の変更を登録として保存しようとした")
+	}
+	return s.inTx(ctx, func(tx *sql.Tx) error { return save(ctx, tx, c) })
+}
+
+// UpdateTask は、id のタスクを読み、change が返した状態の変更を保存する。change がエラーを返せば何も保存しない
+func (s *Store) UpdateTask(ctx context.Context, id string, change func(task.Task) (task.Change, error)) (task.Task, error) {
+	var updated task.Task
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		cur, err := getTask(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		c, err := change(cur)
+		if err != nil {
+			return err
+		}
+		if c.IsNew() || c.Task().ID != id {
+			return task.Errorf(task.CodeInternal, "タスク %s の変更として、別の状態の変更を保存しようとした", id)
+		}
+		if err := save(ctx, tx, c); err != nil {
+			return err
+		}
+		updated = c.Task()
+		return nil
+	})
+	return updated, err
+}
+
+// save は、状態の変更を保存する。tasks と events に書き込むのは、この関数だけ。
+// タスクとイベントを同じトランザクションの中で続けて書き、片方だけが残らないようにする（spec/task.dfy の FinishOneResult のコメント）
+func save(ctx context.Context, tx *sql.Tx, c task.Change) error {
+	if !c.FromSpec() {
+		return task.Errorf(task.CodeInternal, "仕様の関数が作っていない状態の変更を保存しようとした")
+	}
+	t, e := c.Task(), c.Event()
+	if c.IsNew() {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO tasks (id, title, body, status, created_at) VALUES (?, ?, ?, ?, ?)`,
 			t.ID, t.Title, t.Body, string(t.Status), t.CreatedAt)
@@ -90,41 +128,29 @@ func (s *Store) InsertTask(ctx context.Context, t task.Task, e task.Event) error
 		if err != nil {
 			return err
 		}
-		return insertEvent(ctx, tx, e)
-	})
-}
-
-// UpdateTask は、id のタスクを読み、change で変えた結果とイベントを保存する。
-// change がエラーを返せば何も保存しない
-func (s *Store) UpdateTask(ctx context.Context, id string, change func(task.Task) (task.Task, task.Event, error)) (task.Task, error) {
-	var updated task.Task
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		cur, err := getTask(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		next, e, err := change(cur)
-		if err != nil {
-			return err
-		}
-		res, err := tx.ExecContext(ctx,
-			`UPDATE tasks SET title = ?, body = ?, status = ? WHERE id = ?`,
-			next.Title, next.Body, string(next.Status), id)
+	} else {
+		// 書き換えるのは状態だけ。仕様の Finish は状態以外を変えない（FinishOneResult）
+		res, err := tx.ExecContext(ctx, `UPDATE tasks SET status = ? WHERE id = ?`, string(t.Status), t.ID)
 		if err != nil {
 			return err
 		}
 		if n, err := res.RowsAffected(); err != nil {
 			return err
 		} else if n != 1 {
-			return fmt.Errorf("タスク %s の更新が %d 行に及んだ", id, n)
+			return fmt.Errorf("タスク %s の更新が %d 行に及んだ", t.ID, n)
 		}
-		if err := insertEvent(ctx, tx, e); err != nil {
-			return err
-		}
-		updated = next
-		return nil
-	})
-	return updated, err
+	}
+	var from, reason sql.NullString
+	if e.From != nil {
+		from = sql.NullString{String: string(*e.From), Valid: true}
+	}
+	if e.Reason != nil {
+		reason = sql.NullString{String: *e.Reason, Valid: true}
+	}
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.TaskID, e.Actor, from, string(e.To), reason, e.At)
+	return err
 }
 
 // GetTask は、id のタスクを返す。なければ not_found
@@ -242,20 +268,6 @@ func scanTask(r scanner) (task.Task, error) {
 	}
 	t.Status = s
 	return t, nil
-}
-
-func insertEvent(ctx context.Context, tx *sql.Tx, e task.Event) error {
-	var from, reason sql.NullString
-	if e.From != nil {
-		from = sql.NullString{String: string(*e.From), Valid: true}
-	}
-	if e.Reason != nil {
-		reason = sql.NullString{String: *e.Reason, Valid: true}
-	}
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.TaskID, e.Actor, from, string(e.To), reason, e.At)
-	return err
 }
 
 func isUniqueViolation(err error) bool {

@@ -52,18 +52,18 @@ func (a *App) Add(ctx context.Context, title, body, actor string) (task.Task, er
 		if err != nil {
 			return task.Task{}, err
 		}
-		t, e, err := task.NewTask(id, title, body, actor, now)
+		c, err := task.NewTask(id, title, body, actor, now)
 		if err != nil {
 			return task.Task{}, err
 		}
-		err = a.store.InsertTask(ctx, t, e)
+		err = a.store.InsertTask(ctx, c)
 		if task.CodeOf(err) == task.CodeIDConflict {
 			continue
 		}
 		if err != nil {
 			return task.Task{}, err
 		}
-		return t, nil
+		return c.Task(), nil
 	}
 	return task.Task{}, task.Errorf(task.CodeInternal, "%d 回続けて既にある ID ができた", maxIDAttempts)
 }
@@ -74,7 +74,7 @@ func (a *App) Finish(ctx context.Context, id string, o task.Outcome, reason, act
 		return task.Task{}, err
 	}
 	now := a.now().UnixMilli()
-	return a.store.UpdateTask(ctx, id, func(cur task.Task) (task.Task, task.Event, error) {
+	return a.store.UpdateTask(ctx, id, func(cur task.Task) (task.Change, error) {
 		return task.Finish(cur, o, reason, actor, now)
 	})
 }
