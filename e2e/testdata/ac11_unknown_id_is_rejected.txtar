@@ -1,0 +1,14 @@
+# AC11: 存在しない ID を指定すると、エラーコードが返る
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title ある
+
+! exec quenta task show ffffffff
+! stdout .
+stderr '"code":"not_found"'
+! exec quenta task done ffffffff --reason 理由
+! stdout .
+stderr '"code":"not_found"'
+! exec quenta task cancel ffffffff --reason 理由
+! stdout .
+stderr '"code":"not_found"'

@@ -1,0 +1,10 @@
+# AC02: 本文は省略できる
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 本文なし
+! stderr .
+stdout '"title":"本文なし","body":"","status":"todo"'
+setjson ID task.id
+
+exec quenta task show $ID
+stdout '"title":"本文なし","body":"","status":"todo"'

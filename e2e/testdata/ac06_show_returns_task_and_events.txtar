@@ -1,0 +1,18 @@
+# AC06: ID を指定してタスクを見ると、タスクの内容と、そのタスクのイベントが返る
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 見る --body 本文
+setjson ID task.id
+setjson AT task.created_at
+
+# 別のタスクのイベントは含まない
+exec quenta task add --title 別のタスク
+setjson OTHER task.id
+exec quenta task done $OTHER --reason 別の理由
+
+# 登録もイベントとして残る（変更前と理由は null、日時は作成日時と同じ）
+exec quenta task show $ID
+cmpenv stdout want.json
+
+-- want.json --
+{"task":{"id":"$ID","title":"見る","body":"本文","status":"todo","created_at":"$AT"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":null,"at":"$AT"}]}

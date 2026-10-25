@@ -1,0 +1,30 @@
+# AC10: 終わったタスクの状態は変えられず、エラーコードが返る。タスクは変わらない
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 完了済み
+setjson DONE task.id
+exec quenta task add --title 中止済み
+setjson CANCELED task.id
+exec quenta task done $DONE --reason 済んだ
+exec quenta task cancel $CANCELED --reason 要らない
+
+exec quenta task show $DONE
+cp stdout done_before.json
+exec quenta task show $CANCELED
+cp stdout canceled_before.json
+
+! exec quenta task done $DONE --reason もう一度
+! stdout .
+stderr '"code":"already_finished"'
+! exec quenta task cancel $DONE --reason もう一度
+stderr '"code":"already_finished"'
+! exec quenta task done $CANCELED --reason もう一度
+stderr '"code":"already_finished"'
+! exec quenta task cancel $CANCELED --reason もう一度
+stderr '"code":"already_finished"'
+
+# タスクもイベントも変わっていない
+exec quenta task show $DONE
+cmp stdout done_before.json
+exec quenta task show $CANCELED
+cmp stdout canceled_before.json

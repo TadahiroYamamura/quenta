@@ -1,0 +1,27 @@
+# AC09: 理由がないと、完了にも中止にもできず、エラーコードが返る。タスクは変わらない
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 理由なし
+setjson ID task.id
+exec quenta task show $ID
+cp stdout before.json
+
+# 理由を指定しない・空・空白だけ（タブと全角の空白）
+! exec quenta task done $ID
+! stdout .
+stderr '"code":"reason_required"'
+! exec quenta task done $ID --reason ''
+stderr '"code":"reason_required"'
+! exec quenta task done $ID --reason '	　'
+stderr '"code":"reason_required"'
+! exec quenta task cancel $ID
+! stdout .
+stderr '"code":"reason_required"'
+! exec quenta task cancel $ID --reason ''
+stderr '"code":"reason_required"'
+! exec quenta task cancel $ID --reason '	　'
+stderr '"code":"reason_required"'
+
+# タスクもイベントも変わっていない
+exec quenta task show $ID
+cmp stdout before.json

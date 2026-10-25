@@ -1,0 +1,20 @@
+# AC08: 理由を付けて中止にすると canceled になり、イベントが記録される
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 中止する
+setjson ID task.id
+setjson AT task.created_at
+
+env QUENTA_SESSION=session-2
+exec quenta task cancel $ID --reason 方針が変わった
+! stderr .
+cmpenv stdout task.json
+
+exec quenta task show $ID
+setjson CANCEL_AT events.1.at
+cmpenv stdout show.json
+
+-- task.json --
+{"task":{"id":"$ID","title":"中止する","body":"","status":"canceled","created_at":"$AT"}}
+-- show.json --
+{"task":{"id":"$ID","title":"中止する","body":"","status":"canceled","created_at":"$AT"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":null,"at":"$AT"},{"actor":"session-2","from":"todo","to":"canceled","reason":"方針が変わった","at":"$CANCEL_AT"}]}
