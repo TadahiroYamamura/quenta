@@ -1,0 +1,8 @@
+# 変異テストで、振る舞いの変わらない変異の除外（CLAUDE.md の「変異テスト」）。人がレビューする。
+# 照らし合わせは、ファイル・変異の種類・ソースの行の中身（前後の空白を除く）で行う。行番号は使わない（ほかの行を足しただけでずれるため）。
+
+[[exclusion]]
+file = "internal/task/task.go"
+type = "ARITHMETIC_BASE"
+code = "OutcomeComplete Outcome = iota + 1"
+reason = "終わらせ方の定数の値をずらす変異。値は名前の付いた定数（OutcomeComplete・OutcomeCancel）でしか使わず、ゼロ値に意味を持たせていないので、ずらしても振る舞いは変わらない"

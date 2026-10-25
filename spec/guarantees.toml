@@ -1,0 +1,709 @@
+# 保証の対応表（CLAUDE.md の「保証の対応表」）。人が読む表は make guarantees で作る。
+# fingerprint は make guarantees（tools/guarantees fingerprint）が計算した値。仕様の本文を変えたら、守り方を見直してから直す。
+
+# ---------- エラーコード ----------
+
+[[guarantee]]
+id = "error-code"
+property = "ErrorCode"
+fingerprint = "sha256:dbdb0a404a96550c"
+importance = "中"
+guards = ["証明"]
+proofs = ["ErrorCode"]
+code = ["internal/task", "internal/cli"]
+rationale = "CLI がエラーの JSON の code に出す文字列は、仕様の ErrorCode が返す値そのもの。エラーを足して書き分けを忘れると dafny verify が止まる"
+
+[[guarantee]]
+id = "error-codes-distinct"
+property = "ErrorCodesDistinct"
+ensures = 0
+fingerprint = "sha256:c8f4cfeddc080cf7"
+importance = "中"
+guards = ["証明"]
+proofs = ["ErrorCode"]
+code = ["internal/task"]
+rationale = "実装は ErrorCode の値をそのまま出すので、違うエラーが同じコードになることはない"
+
+# ---------- 登録（NewTask） ----------
+
+[[guarantee]]
+id = "new-task-session-required"
+property = "NewTaskErrors"
+ensures = 0
+fingerprint = "sha256:c13fd87ec23a9ba8"
+importance = "中"
+guards = ["証明"]
+proofs = ["NewTask"]
+code = ["internal/app", "internal/task"]
+rationale = "実装の登録は、必ず NewTask を通り、そのエラーを返す"
+
+[[guarantee]]
+id = "new-task-title-required"
+property = "NewTaskErrors"
+ensures = 1
+fingerprint = "sha256:9f020ea8d7e49ecb"
+importance = "中"
+guards = ["証明"]
+proofs = ["NewTask"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 3。実装の登録は、必ず NewTask を通り、そのエラーを返す"
+
+[[guarantee]]
+id = "new-task-id-conflict"
+property = "NewTaskErrors"
+ensures = 2
+fingerprint = "sha256:698588b001a8baf0"
+importance = "高"
+guards = ["証明", "DB の制約"]
+proofs = ["NewTask"]
+constraints = ["tasks_id_unique"]
+premises = ["id-taken-observed"]
+code = ["internal/app", "internal/store"]
+rationale = "ID が使われていれば NewTask が IdConflict を返し、実装は ID を作り直す。調べてから書くまでのあいだに重なっても、一意の制約が最後に拒む"
+
+[[guarantee]]
+id = "new-task-errors-only"
+property = "NewTaskErrors"
+ensures = 3
+fingerprint = "sha256:395c4290f570a291"
+importance = "中"
+guards = ["証明"]
+proofs = ["NewTask"]
+code = ["internal/task"]
+rationale = "実装の登録が返す仕様のエラーは、NewTask が返すものだけ"
+
+[[guarantee]]
+id = "new-task-ok-iff"
+property = "NewTaskResult"
+ensures = 0
+fingerprint = "sha256:c3bdb104ab6a7fad"
+importance = "中"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["id-taken-observed"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 1・2。主体とタイトルがあり、ID が使われていなければ登録できる（本文には条件がない）"
+
+[[guarantee]]
+id = "new-task-result"
+property = "NewTaskResult"
+ensures = 1
+fingerprint = "sha256:fcbbc2b9fe8fc3b7"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+code = ["internal/task", "internal/store"]
+rationale = "受け入れ条件 1。保存するタスクとイベントは、NewTask が返したものだけ（保存の層は、仕様の関数が作った状態の変更しか受け取らない）"
+
+# ---------- 完了・中止（Finish） ----------
+
+[[guarantee]]
+id = "finish-session-required"
+property = "FinishErrors"
+ensures = 0
+fingerprint = "sha256:4f73af9a44fb1e38"
+importance = "中"
+guards = ["証明"]
+proofs = ["Finish"]
+code = ["internal/app", "internal/task"]
+rationale = "実装の完了・中止は、必ず Finish を通り、そのエラーを返す"
+
+[[guarantee]]
+id = "finish-reason-required"
+property = "FinishErrors"
+ensures = 1
+fingerprint = "sha256:083eca7ce6b5d4d7"
+importance = "中"
+guards = ["証明"]
+proofs = ["Finish"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 9。実装の完了・中止は、必ず Finish を通り、そのエラーを返す（エラーのとき DB が変わらないことは impl-finish-err-unchanged）"
+
+[[guarantee]]
+id = "finish-not-found"
+property = "FinishErrors"
+ensures = 2
+fingerprint = "sha256:c8ff764696826103"
+importance = "中"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["found-observed"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 11。Go が DB で探した結果がなければ、Finish が NotFound を返す"
+
+[[guarantee]]
+id = "finish-already-finished"
+property = "FinishErrors"
+ensures = 3
+fingerprint = "sha256:0d8ec01d47c43d83"
+importance = "高"
+guards = ["証明", "DB の制約"]
+proofs = ["Finish"]
+constraints = ["tasks_finished_frozen"]
+premises = ["found-observed"]
+code = ["internal/app", "internal/store"]
+rationale = "受け入れ条件 10。終わったタスクには Finish が AlreadyFinished を返す（エラーのとき DB が変わらないことは impl-finish-err-unchanged）。実装の不具合で書き換えようとしても、トリガーが拒む"
+
+[[guarantee]]
+id = "finish-errors-only"
+property = "FinishErrors"
+ensures = 4
+fingerprint = "sha256:9fcc04c0d5d3e56f"
+importance = "中"
+guards = ["証明"]
+proofs = ["Finish"]
+code = ["internal/task"]
+rationale = "実装の完了・中止が返す仕様のエラーは、Finish が返すものだけ"
+
+[[guarantee]]
+id = "finish-rejects-finished"
+property = "FinishRejectsFinished"
+ensures = 0
+fingerprint = "sha256:c4962680dc971b8d"
+importance = "高"
+guards = ["証明", "DB の制約"]
+proofs = ["Finish"]
+constraints = ["tasks_finished_frozen"]
+premises = ["found-observed"]
+code = ["internal/store"]
+rationale = "実装がタスクを書き換えるのは、Finish が Ok を返したときだけ。その前提がコードの変更で崩れても、トリガーが拒む"
+
+[[guarantee]]
+id = "finish-ok-iff"
+property = "FinishResult"
+ensures = 0
+fingerprint = "sha256:c3e94aafffc8f7af"
+importance = "中"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["found-observed"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 7・8。主体と理由があり、タスクがあって終わっていなければ、完了・中止できる"
+
+[[guarantee]]
+id = "finish-result"
+property = "FinishResult"
+ensures = 1
+fingerprint = "sha256:9489b527e2a34f6c"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["found-observed"]
+code = ["internal/task", "internal/store"]
+rationale = "受け入れ条件 7・8、経緯を残す。保存するタスクとイベントは、Finish が返したものだけ"
+
+# ---------- 詳細（ShowTask） ----------
+
+[[guarantee]]
+id = "show-not-found"
+property = "ShowTaskResult"
+ensures = 0
+fingerprint = "sha256:515dc7441c5d5842"
+importance = "中"
+guards = ["証明"]
+proofs = ["ShowTask"]
+premises = ["found-observed"]
+code = ["internal/app", "internal/task"]
+rationale = "受け入れ条件 11。Go が DB で探した結果がなければ、ShowTask が NotFound を返す"
+
+[[guarantee]]
+id = "show-errors-only"
+property = "ShowTaskResult"
+ensures = 1
+fingerprint = "sha256:a822ded1c574490e"
+importance = "中"
+guards = ["証明"]
+proofs = ["ShowTask"]
+code = ["internal/task"]
+rationale = "実装の詳細が返す仕様のエラーは、ShowTask が返すものだけ"
+
+[[guarantee]]
+id = "show-result"
+property = "ShowTaskResult"
+ensures = 2
+fingerprint = "sha256:43e6e8c6fe3d4cdd"
+importance = "中"
+guards = ["証明", "テスト"]
+proofs = ["ShowTask"]
+premises = ["found-observed"]
+code = ["internal/app", "internal/store"]
+rationale = "受け入れ条件 6。返すタスクは、探したタスクそのもの。そのタスクのイベントを集めるのは SQL で、テストで手本の Show と比べる"
+
+# ---------- 前提（Dafny の外の事実） ----------
+
+[[guarantee]]
+id = "id-taken-observed"
+property = "IdTakenObserved"
+fingerprint = "sha256:75a1bcd1efab02f0"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_id_unique"]
+code = ["internal/store", "internal/app"]
+rationale = "Go は、保存と同じトランザクションの中で、その ID のタスクがあるかを調べて NewTask に渡す。調べ違えても、一意の制約が重なる保存を拒む。ID の作り方を差し替えてわざと重ねるテストで、作り直す経路を通す"
+
+[[guarantee]]
+id = "found-observed"
+property = "FoundObserved"
+fingerprint = "sha256:639ac930aa29360c"
+importance = "高"
+guards = ["実行時の確認", "テスト"]
+code = ["internal/store"]
+approved = "2026-10-26"
+rationale = "Go は、保存と同じトランザクションの中で、ID を条件にタスクを探して Finish・ShowTask に渡す。DB の制約では守れない。別のタスクを返す（取り違え）は、探した結果の ID が指定した ID と一致するかを実行時に確かめ、違えば internal のエラーにする。確認がはたらくことは、探す処理をわざと別の行を返すよう差し替えるテストで確かめる。あるのに無いと返すことは、プロパティベースのテストで、毎歩、実装の結果を手本（状態から正しく探す）と比べて守る。テストと実行時の確認で守ることは 2026-10-26 に人が了承した"
+
+[[guarantee]]
+id = "applied-like-model"
+property = "AppliedLikeModel"
+fingerprint = "sha256:4a216e074391b53f"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_no_delete", "tasks_only_status_changes", "tasks_finished_frozen", "events_no_update", "events_no_delete", "tasks_id_unique", "events_task_fk"]
+code = ["internal/store", "internal/task"]
+approved = "2026-10-26"
+rationale = "エラーなら何も変えないことは、保存の層が仕様の関数の成功の結果しか受け取らない Go の作りとテストで守る。成功の結果を手本と同じ形で反映することのうち、タスクの削除・上書き・状態以外の書き換え・終わったタスクの書き換えと、イベントの書き換え・削除は、DB の制約が拒む。保存の層が受け取るのは仕様の関数が作った状態の変更だけで、1 つの関数がタスクとイベントを 1 つのトランザクションで書く。DB で守れない部分のうち、状態の書き換えにイベントが 1 件だけ伴う・ID を条件に 1 行だけ書き換える・新しい行が末尾に入る、を Go の作りとテストで守ることは 2026-10-25 に、エラーなら変えない、は 2026-10-26 に人が了承した"
+
+[[guarantee]]
+id = "stored-state-valid"
+property = "Valid"
+fingerprint = "sha256:9cbf0ed63625b55a"
+importance = "高"
+guards = ["DB の制約", "実行時の確認", "テスト"]
+constraints = ["tasks_id_unique", "events_task_fk"]
+premises = ["applied-like-model", "id-taken-observed", "found-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "帰納法で守る。空の DB は不変条件を満たし（empty-is-valid）、実装の登録・完了・中止は、前提のもとで不変条件を保つ（impl-add-preserves-valid・impl-finish-preserves-valid。これらは「操作の前の DB が不変条件を満たす」ことを前提にするので、この行と互いを指しあうが、帰納法の仮定であって循環ではない）。加えて、DB から読んだタスクは仕様の関数に渡す前に ValidTask で確かめ、プロパティベースのテストで、毎歩、実装の状態に Valid を当てる"
+
+[[guarantee]]
+id = "impl-add-same-result"
+property = "ImplNewTaskSameResult"
+ensures = 0
+fingerprint = "sha256:c480610b069ee6ce"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["id-taken-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "Go が渡した「ID が使われているか」が DB と一致すれば、実装の NewTask の結果は手本と同じ"
+
+[[guarantee]]
+id = "impl-add-ok-state"
+property = "ImplAddMatchesModel"
+ensures = 0
+fingerprint = "sha256:d6e6b4a93a89f5c8"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "前提のもとで、登録が成功した後の DB の状態は、手本の Add の結果と同じ。手本について証明した性質（add-result・add-preserves-valid など）は、これで実装の DB の状態に移る"
+
+[[guarantee]]
+id = "impl-add-err-unchanged"
+property = "ImplAddMatchesModel"
+ensures = 1
+fingerprint = "sha256:2160c1f23d8c09ab"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "受け入れ条件 3。前提のもとで、登録がエラーなら DB の状態は変わらない"
+
+[[guarantee]]
+id = "impl-finish-same-result"
+property = "ImplFinishSameResult"
+ensures = 0
+fingerprint = "sha256:3d340e15d943a3ad"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["found-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "Go が渡した「探したタスク」が DB と一致すれば、実装の Finish の結果は手本と同じ"
+
+[[guarantee]]
+id = "impl-finish-ok-state"
+property = "ImplFinishMatchesModel"
+ensures = 0
+fingerprint = "sha256:b79992e44202139f"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["applied-like-model", "found-observed", "stored-state-valid"]
+code = ["internal/store", "internal/task"]
+rationale = "前提のもとで、完了・中止が成功した後の DB の状態は、手本の FinishTask の結果と同じ（ID が重ならないので、置き換えるタスクは 1 つに決まる）。手本について証明した性質（finish-task-result・finish-preserves-valid など）は、これで実装の DB の状態に移る"
+
+[[guarantee]]
+id = "impl-finish-err-unchanged"
+property = "ImplFinishMatchesModel"
+ensures = 1
+fingerprint = "sha256:c5dae63fd86f1bcf"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["applied-like-model", "found-observed", "stored-state-valid"]
+code = ["internal/store", "internal/task"]
+rationale = "受け入れ条件 9・10。前提のもとで、完了・中止がエラーなら DB の状態は変わらない"
+
+[[guarantee]]
+id = "impl-show-same-result"
+property = "ImplShowMatchesModel"
+ensures = 0
+fingerprint = "sha256:0411d3e1f7245a3a"
+importance = "中"
+guards = ["証明"]
+proofs = ["ShowTask"]
+premises = ["found-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "Go が渡した「探したタスク」が DB と一致すれば、実装の ShowTask の結果は手本と同じ"
+
+[[guarantee]]
+id = "impl-add-preserves-valid"
+property = "ImplAddPreservesValid"
+ensures = 0
+fingerprint = "sha256:025c7e344cdbaaeb"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["stored-state-valid", "applied-like-model", "id-taken-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "帰納法の一歩。不変条件を満たす DB に実装の登録を行っても、不変条件は保たれる（impl-add-ok-state・impl-add-err-unchanged と add-preserves-valid を組み合わせる）"
+
+[[guarantee]]
+id = "impl-finish-preserves-valid"
+property = "ImplFinishPreservesValid"
+ensures = 0
+fingerprint = "sha256:3fbb23a8edcd1faf"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store", "internal/task"]
+rationale = "帰納法の一歩。不変条件を満たす DB に実装の完了・中止を行っても、不変条件は保たれる（impl-finish-ok-state・impl-finish-err-unchanged と finish-preserves-valid を組み合わせる）"
+
+[[guarantee]]
+id = "empty-is-valid"
+property = "EmptyIsValid"
+ensures = 0
+fingerprint = "sha256:a4fce8a01d272e7f"
+importance = "高"
+guards = ["人のレビュー", "テスト"]
+code = ["internal/store"]
+review = "2026-10-26 人が db/migrations/0001_init.sql を読み、行を入れる文がないことを確かめた"
+approved = "2026-10-26"
+rationale = "新しい DB は、db/migrations/0001_init.sql が表を作るだけで行を入れないので空。空の状態は不変条件を満たす（帰納法の出発点）。新しく作った DB のタスクとイベントが 0 件であることをテストで確かめる"
+
+[[guarantee]]
+id = "add-preserves-valid"
+property = "AddPreservesValid"
+ensures = 0
+fingerprint = "sha256:fe539bb8d4d19772"
+importance = "高"
+guards = ["証明"]
+proofs = ["NewTask"]
+premises = ["stored-state-valid", "applied-like-model", "id-taken-observed"]
+code = ["internal/store"]
+rationale = "手本の Add は不変条件を保つ。実装の DB の状態についての帰納法の一歩は impl-add-preserves-valid"
+
+[[guarantee]]
+id = "finish-preserves-valid"
+property = "FinishPreservesValid"
+ensures = 0
+fingerprint = "sha256:123013ee962e8b12"
+importance = "高"
+guards = ["証明"]
+proofs = ["Finish"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store"]
+rationale = "手本の FinishTask は不変条件を保つ。実装の DB の状態についての帰納法の一歩は impl-finish-preserves-valid"
+
+[[guarantee]]
+id = "add-result"
+property = "AddResult"
+ensures = 0
+fingerprint = "sha256:406ab436bea4f119"
+importance = "高"
+guards = ["証明", "DB の制約", "テスト"]
+proofs = ["NewTask"]
+constraints = ["tasks_id_unique", "tasks_no_delete", "tasks_only_status_changes"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-add-ok-state で実装の DB の状態に移す。足すタスクとイベントは NewTask が返したもの。既存のタスクの削除・上書き・状態以外の書き換えは DB の制約が拒む。todo のタスクの状態が書き換わらないことは、applied-like-model の Go の作りとテストによる（人が了承した）"
+
+[[guarantee]]
+id = "finish-task-result"
+property = "FinishTaskResult"
+ensures = 0
+fingerprint = "sha256:bb2e4cbf27b29eaa"
+importance = "高"
+guards = ["証明", "DB の制約", "テスト"]
+proofs = ["Finish"]
+constraints = ["tasks_id_unique", "tasks_finished_frozen"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-finish-ok-state で実装の DB の状態に移す。対象の変わり方とイベントは Finish が返したもの。実装は ID を条件に 1 行だけ書き換え、書き換えた行がちょうど 1 行であることを実行時に確かめる。ID を条件にすることは Go と SQL にあり、テストで守る（人が了承した）。条件が外れても、終わったタスクへの書き換えはトリガーが拒む"
+
+[[guarantee]]
+id = "finished-unchanged-by-add"
+property = "FinishedTasksNeverChange"
+ensures = 0
+fingerprint = "sha256:53cd8e390eac4b9c"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_finished_frozen", "tasks_only_status_changes", "tasks_no_delete"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-add-ok-state で実装の DB の状態に移す。登録は INSERT だけで、終わったタスクの書き換え・削除・上書きは DB の制約が拒む。同じ位置にあり続けることは、新しい行が末尾に入るという Go の作りとテストによる（applied-like-model。人が了承した）"
+
+[[guarantee]]
+id = "finished-unchanged-by-finish"
+property = "FinishedTasksNeverChange"
+ensures = 1
+fingerprint = "sha256:f7a6698086a5e2cd"
+importance = "高"
+guards = ["証明", "DB の制約"]
+proofs = ["Finish"]
+constraints = ["tasks_finished_frozen"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store"]
+rationale = "手本についての証明を、impl-finish-ok-state で実装の DB の状態に移す。終わったタスクには Finish がエラーを返し、実装は保存しない。トリガーも拒む"
+
+[[guarantee]]
+id = "tasks-never-disappear-add"
+property = "TasksNeverDisappear"
+ensures = 0
+fingerprint = "sha256:a4d7dec8b3ab792e"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_no_delete", "tasks_only_status_changes"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-add-ok-state で実装の DB の状態に移す。削除・上書き・ID と登録した順の書き換えは DB の制約が拒む。新しいタスクが後ろの位置に入ることは、保存の層が番号を指定しないという Go の作りとテストで守る（今の DB の制約では拒まず、拒むトリガーは足さないと人が決めた。#21）"
+
+[[guarantee]]
+id = "tasks-never-disappear-finish"
+property = "TasksNeverDisappear"
+ensures = 1
+fingerprint = "sha256:e5ec8f53f8bc46eb"
+importance = "高"
+guards = ["DB の制約"]
+constraints = ["tasks_no_delete", "tasks_only_status_changes"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store"]
+rationale = "手本についての証明を、impl-finish-ok-state で実装の DB の状態に移す。完了・中止は状態の UPDATE だけで、削除と、ID・登録した順の書き換えは DB の制約が拒む"
+
+[[guarantee]]
+id = "events-append-only-add"
+property = "EventsAppendOnly"
+ensures = 0
+fingerprint = "sha256:2fcf2163a8eb531e"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["events_no_update", "events_no_delete"]
+premises = ["applied-like-model", "id-taken-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-add-ok-state で実装の DB の状態に移す。既存のイベントが消えず書き換わらないことは DB の制約。末尾に 1 件だけ足されることは、保存の層が番号を指定せずイベントを 1 件だけ書くという Go の作りとテストで守る（人が了承した）"
+
+[[guarantee]]
+id = "events-append-only-finish"
+property = "EventsAppendOnly"
+ensures = 1
+fingerprint = "sha256:ce81c8cf4de56f6a"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["events_no_update", "events_no_delete"]
+premises = ["stored-state-valid", "applied-like-model", "found-observed"]
+code = ["internal/store"]
+approved = "2026-10-25"
+rationale = "手本についての証明を、impl-finish-ok-state で実装の DB の状態に移す。events-append-only-add と同じ"
+
+[[guarantee]]
+id = "list-only-visible"
+property = "ListOrdered"
+ensures = 0
+fingerprint = "sha256:946857de0e9e45c1"
+importance = "中"
+guards = ["テスト"]
+code = ["internal/app", "internal/store"]
+rationale = "受け入れ条件 4・5。手本の List についての性質。実装は List を通らず、全件を SQL で読んで 1 件ずつ IsVisible で判定する（IsVisible の定義は is-visible）。テストで手本の List と比べる"
+
+[[guarantee]]
+id = "list-all-visible"
+property = "ListOrdered"
+ensures = 1
+fingerprint = "sha256:e1634ef0d52e32b3"
+importance = "中"
+guards = ["テスト"]
+code = ["internal/app", "internal/store"]
+rationale = "受け入れ条件 4・5。手本の List についての性質。出すべきタスクを漏らさないことは、全件を読んで 1 件ずつ判定する Go の作りとテストで守る"
+
+[[guarantee]]
+id = "list-no-duplicates"
+property = "ListOrdered"
+ensures = 2
+fingerprint = "sha256:73a52d78deab1574"
+importance = "中"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_id_unique"]
+premises = ["stored-state-valid"]
+code = ["internal/app", "internal/store"]
+rationale = "ID が重ならないので、同じタスクが 2 回出ることはない。テストで手本の List と比べる"
+
+[[guarantee]]
+id = "list-order-by-created"
+property = "ListOrdered"
+ensures = 3
+fingerprint = "sha256:fe7d08a552fa2892"
+importance = "低"
+guards = ["テスト"]
+code = ["internal/store"]
+rationale = "並び順は SQL の ORDER BY で、テストで手本の List と比べる"
+
+[[guarantee]]
+id = "list-order-ties"
+property = "ListOrdered"
+ensures = 4
+fingerprint = "sha256:859967642c99b2df"
+importance = "低"
+guards = ["テスト"]
+code = ["internal/store"]
+rationale = "作成日時が同じときは登録した順（tasks.seq）。テストで、作成日時を同じにして並びを確かめる"
+
+# ---------- 述語の定義 ----------
+
+[[guarantee]]
+id = "unique-ids"
+property = "UniqueIds"
+fingerprint = "sha256:39763e5e5febebe4"
+importance = "高"
+guards = ["DB の制約", "テスト"]
+constraints = ["tasks_id_unique"]
+code = ["internal/store", "internal/app"]
+rationale = "ID が重なる保存は一意の制約が拒む。ID の作り方を差し替えてわざと重ねるテストで、作り直す経路を通す"
+
+[[guarantee]]
+id = "valid-task"
+property = "ValidTask"
+fingerprint = "sha256:cd5f73320ac554a1"
+importance = "中"
+guards = ["証明", "実行時の確認"]
+proofs = ["NewTask", "Finish", "ValidTask"]
+code = ["internal/task"]
+rationale = "保存するタスクは NewTask・Finish が返したもので、タイトルが空でない。DB から読んだタスクは、Finish・ShowTask・IsVisible に渡す前に ValidTask で確かめ、満たさなければ internal にする"
+
+[[guarantee]]
+id = "is-visible"
+property = "IsVisible"
+fingerprint = "sha256:f76d1caf7674490e"
+importance = "中"
+guards = ["証明"]
+proofs = ["IsVisible"]
+code = ["internal/app"]
+rationale = "受け入れ条件 4・5。実装の一覧は、DB から読んだタスクを 1 件ずつ IsVisible で判定する"
+
+[[guarantee]]
+id = "is-space"
+property = "IsSpace"
+fingerprint = "sha256:94f11a8f050e945e"
+importance = "中"
+guards = ["証明", "テスト"]
+proofs = ["NewTask", "Finish"]
+code = ["internal/task"]
+rationale = "受け入れ条件 3・9 の「空」の意味。IsBlank を通じて NewTask・Finish が使う。定義が Go の unicode.IsSpace と全文字で一致することをテストで確かめる"
+
+# ---------- 証明の補助（実装の守りに直接つながらない） ----------
+
+[[guarantee]]
+id = "aux-find-index"
+property = "FindIndex"
+fingerprint = "sha256:19262da66eaee998"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "手本の関数の事後条件で、ほかの補題の証明に使う"
+
+[[guarantee]]
+id = "aux-insert"
+property = "Insert"
+fingerprint = "sha256:282e71279004c579"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "手本の一覧の並べ替えの事後条件で、ListOrdered の証明に使う"
+
+[[guarantee]]
+id = "aux-sort"
+property = "Sort"
+fingerprint = "sha256:a4d78f875b744002"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "手本の一覧の並べ替えの事後条件で、ListOrdered の証明に使う"
+
+[[guarantee]]
+id = "aux-pick-positions"
+property = "PickPositions"
+fingerprint = "sha256:1b2c1c08c065b2dc"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "ListOrdered の証明に使う補題"
+
+[[guarantee]]
+id = "aux-events-of-append"
+property = "EventsOfAppend"
+fingerprint = "sha256:22f84477e0c1973f"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "不変条件を保つ補題の証明に使う"
+
+[[guarantee]]
+id = "aux-events-of-members"
+property = "EventsOfMembers"
+fingerprint = "sha256:58d116cde7e1fcd8"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "不変条件を保つ補題の証明に使う"
+
+[[guarantee]]
+id = "aux-events-of-none"
+property = "EventsOfNone"
+fingerprint = "sha256:9ba1071277920c0a"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "不変条件を保つ補題の証明に使う"
+
+[[guarantee]]
+id = "aux-same-members"
+property = "SameMembers"
+fingerprint = "sha256:b9f7abe7b6f6b4ed"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "ListOrdered の証明に使う補題"
+
+[[guarantee]]
+id = "aux-untag-facts"
+property = "UntagFacts"
+fingerprint = "sha256:fca73f6c13e63cac"
+importance = "低"
+guards = ["なし"]
+approved = "2026-10-26"
+rationale = "ListOrdered の証明に使う補題"
+
+[[guarantee]]
+id = "finish-ok-has-task"
+property = "FinishOkHasTask"
+fingerprint = "sha256:20e8e12315058740"
+importance = "低"
+guards = ["証明"]
+proofs = ["Finish"]
+rationale = "実装は Finish を呼ぶ。手本の FinishTask の定義と、ほかの補題の証明にも使う"

@@ -1,15 +1,9 @@
 // タスクの状態と操作（#1）
 //
-// 実装（Go）が呼ぶ関数は 2 種類ある。
-// - 1 件のタスクについての判定と遷移: NewTask、FinishArgsError、Finish、IsVisible、ValidTask、IsBlank
-//   実装の登録・完了・中止・一覧は、これらを通る。これらの関数の戻り値について証明した性質は、実装で「証明」で守られる。
-//   戻り値を受け取った後のこと（保存する、全件を読む、など）は Go と SQL が行うので、守り方は性質ごとのコメントに書く
-// - 全体の状態（State）についての関数: Empty、Add、FinishTask、Show、List、Valid
-//   実装は同じことをデータベースで行い、これらの関数を通らない。これらは手本で、テストで実装と突き合わせるためだけに呼ぶ。
-//   これらについて証明した性質は、実装では「証明」で守られない。守り方は、性質ごとのコメントに書く
-//
-// 性質ごとのコメントの「重要度」「守るもの」「根拠」は、CLAUDE.md の「保証の対応表」に従う。
-// ID と現在時刻は仕様の外（Go）で作り、引数で受け取る。
+// 実装（Go）が呼ぶ関数: NewTask、Finish、ShowTask、IsVisible、ValidTask、ErrorCode。IsBlank はテストから呼ぶ（実装では NewTask・Finish の中で使う）。
+// 全体の状態（State）の関数（Empty、Add、FinishTask、Show、List、Valid）は手本で、実装は同じことを DB で行う。テストで実装と突き合わせるためだけに呼ぶ。
+// 性質ごとの守り方（保証の対応表）は spec/guarantees.toml にある。
+// ID と現在時刻、DB で調べた事実（ID が使われているか、ID のタスク）は、仕様の外（Go）で用意し、引数で受け取る。
 module Quenta {
 
   datatype Option<T> = None | Some(value: T)
@@ -42,7 +36,7 @@ module Quenta {
 
   datatype Task = Task(id: string, title: string, body: string, status: Status, createdAt: UnixMillis)
 
-  // from が None なら登録のイベント。登録のイベントには理由がない
+  // from が None なら登録のイベント。登録のイベントに理由がないことは、WellFormedEvent で要求する
   datatype Event = Event(taskId: string, actor: string, from: Option<Status>, to: Status, reason: Option<string>, at: UnixMillis)
 
   datatype Error =
@@ -51,14 +45,30 @@ module Quenta {
     | ReasonRequired    // 理由が空
     | NotFound          // その ID のタスクがない
     | AlreadyFinished   // 終わったタスクの状態を変えようとした
-    | IdConflict        // 作った ID が既にある（実装は ID を作り直す）
+    | IdConflict        // 作った ID が既に使われている（実装での扱いは仕様の外。保証の対応表の new-task-id-conflict）
+
+  // エラーコード（CLI がエラーの JSON の code に出す文字列）
+  function ErrorCode(e: Error): string
+  {
+    match e
+    case SessionRequired => "session_required"
+    case TitleRequired => "title_required"
+    case ReasonRequired => "reason_required"
+    case NotFound => "not_found"
+    case AlreadyFinished => "already_finished"
+    case IdConflict => "id_conflict"
+  }
+
+  // エラーコードは、エラーごとに違う
+  lemma ErrorCodesDistinct(a: Error, b: Error)
+    ensures ErrorCode(a) == ErrorCode(b) ==> a == b
+  {
+  }
 
   datatype Result<T> = Ok(value: T) | Err(error: Error)
 
   // 空白とみなす文字。Unicode の文字の性質 White_Space で、Go の unicode.IsSpace と同じ（Go 1.26 の src/unicode/graphic.go と tables.go で照らし合わせた）。
-  // 全角の空白（U+3000）を含み、ゼロ幅スペース（U+200B）は含まない。
-  // 重要度: 中（受け入れ条件 3・9 の「空」の意味）。守るもの: 証明（IsBlank を通じて NewTask・FinishArgsError が使う）とテスト。
-  // 根拠: この定義が Go の unicode.IsSpace と一致することは、TestIsBlankはUnicodeの全文字でGoのunicode_IsSpaceと一致する で確かめる
+  // 全角の空白（U+3000）を含み、ゼロ幅スペース（U+200B）は含まない。Go と一致することは、テストで確かめる（保証の対応表の is-space）
   predicate IsSpace(c: char)
   {
     c == ' ' || c == '\t' || c == '\n' || c == '\U{000B}' || c == '\U{000C}' || c == '\r'
@@ -73,133 +83,128 @@ module Quenta {
     forall i :: 0 <= i < |s| ==> IsSpace(s[i])
   }
 
-  // ---------- 1 件のタスクについての判定と遷移 ----------
+  // ---------- 実装が呼ぶ判定と遷移 ----------
 
-  // 登録。タイトルなどは入力のまま保存する（空白を削らない）
-  function NewTask(id: string, title: string, body: string, actor: string, now: UnixMillis): Result<(Task, Event)>
+  // 登録。idTaken は、Go が DB で調べた「その ID のタスクが既にあるか」。
+  // 主体 → タイトル → ID の順に判定する。タイトルなどは入力のまま保存する（空白を削らない）
+  function NewTask(id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis): Result<(Task, Event)>
   {
     if IsBlank(actor) then Err(SessionRequired)
     else if IsBlank(title) then Err(TitleRequired)
+    else if idTaken then Err(IdConflict)
     else Ok((Task(id, title, body, Todo, now), Event(id, actor, None, Todo, None, now)))
   }
 
-  // 完了・中止の引数の判定。タスクを探す前に行う
-  // （引数が誤っていれば、ID の有無にかかわらず引数のエラーを返す）
-  function FinishArgsError(reason: string, actor: string): Option<Error>
+  // 完了・中止。found は、Go が DB で ID のタスクを探した結果（なければ None）。
+  // 主体 → 理由 → タスクがあるか → 終わっているか、の順に判定する
+  function Finish(found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis): Result<(Task, Event)>
   {
-    if IsBlank(actor) then Some(SessionRequired)
-    else if IsBlank(reason) then Some(ReasonRequired)
-    else None
+    if IsBlank(actor) then Err(SessionRequired)
+    else if IsBlank(reason) then Err(ReasonRequired)
+    else match found
+      case None => Err(NotFound)
+      case Some(t) =>
+        if IsFinished(t.status) then Err(AlreadyFinished)
+        else
+          var to := OutcomeStatus(o);
+          Ok((t.(status := to), Event(t.id, actor, Some(t.status), to, Some(reason), now)))
   }
 
-  // 完了・中止
-  function Finish(t: Task, o: Outcome, reason: string, actor: string, now: UnixMillis): Result<(Task, Event)>
+  // 詳細。found は、Go が DB で ID のタスクを探した結果（なければ None）
+  function ShowTask(found: Option<Task>): Result<Task>
   {
-    match FinishArgsError(reason, actor)
-    case Some(e) => Err(e)
-    case None =>
-      if IsFinished(t.status) then Err(AlreadyFinished)
-      else
-        var to := OutcomeStatus(o);
-        Ok((t.(status := to), Event(t.id, actor, Some(t.status), to, Some(reason), now)))
+    match found
+    case None => Err(NotFound)
+    case Some(t) => Ok(t)
   }
 
-  // 一覧に出すか。includeFinished が false なら終わっていないタスクだけ、true ならすべて（受け入れ条件 4・5）
-  // 重要度: 中。守るもの: 証明（実装は IsVisible で判定する。補題はなく、性質はこの定義そのもの。定義が意図どおりかは人がレビューで確かめる）。
-  // 根拠: 実装の一覧は、DB から読んだタスクを 1 件ずつこの述語に通して絞る
+  // 一覧に出すか。includeFinished が false なら終わっていないタスクだけ、true ならすべて
   predicate IsVisible(t: Task, includeFinished: bool)
   {
     includeFinished || !IsFinished(t.status)
   }
 
   // 1 件のタスクの不変条件: タイトルが空でない
-  // 重要度: 中。守るもの: 証明（NewTask・Finish。補題 NewTaskResult・FinishOneResult）と、DB から読んだときの確認（実装が ValidTask を呼ぶ）。
-  // 根拠: 実装が保存するタスクは、NewTask か Finish が返したものだけ。DB から読んだタスクは、Finish・IsVisible に渡す前に、
-  // 実装がこの述語で確かめ、満たさなければ internal のエラーにする（テスト: Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す）
   predicate ValidTask(t: Task)
   {
     !IsBlank(t.title)
   }
 
-  // ---------- 1 件のタスクについての性質（実装が呼ぶ関数についての証明） ----------
+  // ---------- 実装が呼ぶ関数の性質 ----------
 
-  // 登録の結果: 主体とタイトルが空でなければ、todo のタスクと登録のイベントを返す。
-  // 主体が空なら SessionRequired、主体があってタイトルが空なら TitleRequired。
-  // 返すタスクは ValidTask を満たし、イベントは形が正しく、そのイベントだけでタスクの経緯が正しい
-  // 重要度: 中（受け入れ条件 1〜3）。守るもの: 証明（NewTask）。根拠: 実装の登録は、必ず NewTask の結果を保存する
-  lemma NewTaskResult(id: string, title: string, body: string, actor: string, now: UnixMillis)
-    ensures IsBlank(actor) ==> NewTask(id, title, body, actor, now) == Err(SessionRequired)
-    ensures !IsBlank(actor) && IsBlank(title) ==> NewTask(id, title, body, actor, now) == Err(TitleRequired)
-    ensures !IsBlank(actor) && !IsBlank(title) ==>
-      var r := NewTask(id, title, body, actor, now);
-      r.Ok?
-      && r.value.0 == Task(id, title, body, Todo, now)
-      && r.value.1 == Event(id, actor, None, Todo, None, now)
-      && ValidTask(r.value.0)
-      && WellFormedEvent(r.value.1)
-      && HistoryMatches(r.value.0, [r.value.1])
+  // 登録のエラーの条件（同値）。返すエラーは、この 3 つのどれか
+  lemma NewTaskErrors(id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis)
+    ensures NewTask(id, idTaken, title, body, actor, now) == Err(SessionRequired) <==> IsBlank(actor)
+    ensures NewTask(id, idTaken, title, body, actor, now) == Err(TitleRequired) <==> !IsBlank(actor) && IsBlank(title)
+    ensures NewTask(id, idTaken, title, body, actor, now) == Err(IdConflict) <==> !IsBlank(actor) && !IsBlank(title) && idTaken
+    ensures NewTask(id, idTaken, title, body, actor, now).Err? ==>
+      NewTask(id, idTaken, title, body, actor, now).error in {SessionRequired, TitleRequired, IdConflict}
   {
   }
 
-  // 完了・中止の引数の判定の結果: 主体が空なら SessionRequired、主体があって理由が空なら ReasonRequired、どちらもあれば None
-  // 重要度: 中（受け入れ条件 9）。守るもの: 証明（FinishArgsError）。根拠: 実装の完了・中止は、タスクを探す前に必ず FinishArgsError を呼ぶ
-  lemma FinishArgsErrorResult(reason: string, actor: string)
-    ensures IsBlank(actor) ==> FinishArgsError(reason, actor) == Some(SessionRequired)
-    ensures !IsBlank(actor) && IsBlank(reason) ==> FinishArgsError(reason, actor) == Some(ReasonRequired)
-    ensures !IsBlank(actor) && !IsBlank(reason) ==> FinishArgsError(reason, actor) == None
+  // 登録が成功する条件（同値）と、成功したときの結果: todo のタスクと登録のイベント。
+  // タスクは ValidTask を満たし、イベントは形が正しく、そのイベントだけでタスクの経緯が正しい
+  lemma NewTaskResult(id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis)
+    ensures NewTask(id, idTaken, title, body, actor, now).Ok? <==> !IsBlank(actor) && !IsBlank(title) && !idTaken
+    ensures NewTask(id, idTaken, title, body, actor, now).Ok? ==>
+      var r := NewTask(id, idTaken, title, body, actor, now).value;
+      r.0 == Task(id, title, body, Todo, now)
+      && r.1 == Event(id, actor, None, Todo, None, now)
+      && ValidTask(r.0)
+      && WellFormedEvent(r.1)
+      && HistoryMatches(r.0, [r.1])
   {
   }
 
-  // 終わったタスクには、Finish は必ずエラーを返す（終わったタスクの状態は変えられない）
-  // 重要度: 高（受け入れ条件 10）。守るもの: 証明（Finish）と DB の制約（終わったタスクの書き換えを拒むトリガー（tasks_finished_frozen））。
-  // 根拠: 実装がタスクを書き換えるのは完了・中止だけで、DB から読んだタスクを必ず Finish に通し、Finish が Ok を返したときだけ保存する。
-  // この前提がコードの変更で崩れても、トリガーが拒む（テスト: Test終わったタスクは書き換えられない）。
-  // エラーのときにタスクが変わらないこと（受け入れ条件 10 の後半）は、保存しないことで守る（テスト: Test変更がエラーを返すとタスクもイベントも保存しない）
+  // 完了・中止のエラーの条件（同値）。返すエラーは、この 4 つのどれか
+  lemma FinishErrors(found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    ensures Finish(found, o, reason, actor, now) == Err(SessionRequired) <==> IsBlank(actor)
+    ensures Finish(found, o, reason, actor, now) == Err(ReasonRequired) <==> !IsBlank(actor) && IsBlank(reason)
+    ensures Finish(found, o, reason, actor, now) == Err(NotFound) <==> !IsBlank(actor) && !IsBlank(reason) && found.None?
+    ensures Finish(found, o, reason, actor, now) == Err(AlreadyFinished) <==>
+      !IsBlank(actor) && !IsBlank(reason) && found.Some? && IsFinished(found.value.status)
+    ensures Finish(found, o, reason, actor, now).Err? ==>
+      Finish(found, o, reason, actor, now).error in {SessionRequired, ReasonRequired, NotFound, AlreadyFinished}
+  {
+  }
+
+  // 終わったタスクを渡すと、Finish は必ずエラーを返す
   lemma FinishRejectsFinished(t: Task, o: Outcome, reason: string, actor: string, now: UnixMillis)
     requires IsFinished(t.status)
-    ensures Finish(t, o, reason, actor, now).Err?
+    ensures Finish(Some(t), o, reason, actor, now).Err?
   {
   }
 
-  // 完了・中止の結果。
-  // - 引数の誤りがあればそのエラー、なければ、終わったタスクには AlreadyFinished、終わっていないタスクには Ok を返す
-  // - Ok なら、タスクは状態だけが終わらせ方の状態に変わり（ID・タイトル・本文・作成日時は変わらない）、
-  //   イベントは、変更前がもとの状態、変更後が新しい状態、理由と主体が引数のもので、形が正しい
+  // 完了・中止が成功する条件（同値）と、成功したときの結果。
+  // - タスクは状態だけが終わらせ方の状態に変わる（ID・タイトル・本文・作成日時は変わらない）
+  // - イベントは、変更前がもとの状態、変更後が新しい状態、理由と主体が引数のもので、形が正しい
   // - もとのタスクが ValidTask を満たせば、新しいタスクも満たす
   // - もとのタスクの経緯（イベントの列）が正しければ、そこに返したイベントを足した列で、新しいタスクの経緯も正しい
-  // 重要度: 高（受け入れ条件 7・8、経緯を残す）。守るもの: 証明（Finish）と DB の制約（イベントは追記だけ、EventsAppendOnly を参照）。
-  // 根拠: 実装の完了・中止は、Finish が返したタスクとイベントを 1 つのトランザクションで保存する
-  //（テスト: Test変更がエラーを返すとタスクもイベントも保存しない、Testイベントを保存できなければタスクの変更も残らない）。
-  // 「経緯が正しいまま」は、DB から読んだタスクとイベントで経緯が正しいことを前提にする。その前提の守り方:
-  // - ID・作成日時を書き換えない、イベントを消さず書き換えない: DB の制約（tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）、
-  //   events の書き換え・削除を拒むトリガー（events_no_update・events_no_delete））
-  // - タスクの状態の書き換えには、必ず対応するイベントが伴う: Go の作りとテスト。
-  //   Go の作り: 保存の層が受け取るのは、Finish・NewTask が返したタスクとイベントの組（状態の変更）だけで、その値は、変換用のパッケージの外からは
-  //   仕様の関数の結果からしか作れない。
-  //   tasks と events に書き込むのは保存の層の 1 つの関数だけで、組を 1 つのトランザクションで続けて書く。
-  //   テスト: Test無作為な操作の列で…（毎歩、実装の状態に Valid を当てる）、Testイベントを保存できなければタスクの変更も残らない、
-  //   Test登録のイベントを保存できなければタスクも残らない、Test仕様の関数が作っていない状態の変更や別のタスクの変更は保存しない。
-  //   変異テスト: 完了・中止でイベントを保存しないよう壊すと、AC07・AC08・AC12 ほかが落ちることを確かめた。
-  //   重要度 高をテストで守る部分（2026-10-25 の仕様のレビューで、人が了承した）
-  lemma FinishOneResult(t: Task, o: Outcome, reason: string, actor: string, now: UnixMillis)
-    ensures FinishArgsError(reason, actor).Some? ==>
-      Finish(t, o, reason, actor, now) == Err(FinishArgsError(reason, actor).value)
-    ensures FinishArgsError(reason, actor).None? && IsFinished(t.status) ==>
-      Finish(t, o, reason, actor, now) == Err(AlreadyFinished)
-    ensures FinishArgsError(reason, actor).None? && !IsFinished(t.status) ==>
-      var r := Finish(t, o, reason, actor, now);
-      r.Ok?
-      && r.value.0 == t.(status := OutcomeStatus(o))
-      && r.value.1 == Event(t.id, actor, Some(t.status), OutcomeStatus(o), Some(reason), now)
-      && WellFormedEvent(r.value.1)
-      && (ValidTask(t) ==> ValidTask(r.value.0))
-      && (forall evs :: HistoryMatches(t, evs) ==> HistoryMatches(r.value.0, evs + [r.value.1]))
+  lemma FinishResult(found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    ensures Finish(found, o, reason, actor, now).Ok? <==>
+      !IsBlank(actor) && !IsBlank(reason) && found.Some? && !IsFinished(found.value.status)
+    ensures Finish(found, o, reason, actor, now).Ok? ==>
+      var t := found.value;
+      var r := Finish(found, o, reason, actor, now).value;
+      r.0 == t.(status := OutcomeStatus(o))
+      && r.1 == Event(t.id, actor, Some(t.status), OutcomeStatus(o), Some(reason), now)
+      && WellFormedEvent(r.1)
+      && (ValidTask(t) ==> ValidTask(r.0))
+      && (forall evs :: HistoryMatches(t, evs) ==> HistoryMatches(r.0, evs + [r.1]))
+  {
+  }
+
+  // 詳細のエラーの条件（同値）と、成功したときの結果: 探したタスクそのもの
+  lemma ShowTaskResult(found: Option<Task>)
+    ensures ShowTask(found) == Err(NotFound) <==> found.None?
+    ensures ShowTask(found).Err? ==> ShowTask(found).error == NotFound
+    ensures ShowTask(found).Ok? ==> ShowTask(found).value == found.value
   {
   }
 
   // ---------- 全体の状態（手本。実装はこれらの関数を通らない） ----------
 
-  // tasks は登録した順
+  // tasks は登録した順、events は記録した順
   datatype State = State(tasks: seq<Task>, events: seq<Event>)
 
   const Empty := State([], [])
@@ -213,26 +218,49 @@ module Quenta {
     else FindIndex(tasks[..|tasks| - 1], id)
   }
 
-  function Add(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis): Result<State>
+  // ID のタスク（なければ None）
+  function Lookup(st: State, id: string): Option<Task>
   {
-    match NewTask(id, title, body, actor, now)
-    case Err(e) => Err(e)
-    case Ok((t, e)) =>
-      if FindIndex(st.tasks, id).Some? then Err(IdConflict)
-      else Ok(State(st.tasks + [t], st.events + [e]))
+    match FindIndex(st.tasks, id)
+    case None => None
+    case Some(i) => Some(st.tasks[i])
   }
 
+  // 前提: Go が登録の前に DB で調べた「その ID のタスクが既にあるか」が、DB の状態と一致する
+  predicate IdTakenObserved(st: State, id: string, idTaken: bool)
+  {
+    idTaken == FindIndex(st.tasks, id).Some?
+  }
+
+  // 前提: Go が完了・中止・詳細の前に DB で ID のタスクを探した結果が、DB の状態と一致する
+  predicate FoundObserved(st: State, id: string, found: Option<Task>)
+  {
+    found == Lookup(st, id)
+  }
+
+  // 登録（手本）。ID が使われているかを、状態から正しく調べて NewTask に渡す
+  function Add(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis): Result<State>
+  {
+    match NewTask(id, FindIndex(st.tasks, id).Some?, title, body, actor, now)
+    case Err(e) => Err(e)
+    case Ok((t, e)) => Ok(State(st.tasks + [t], st.events + [e]))
+  }
+
+  // 完了・中止（手本）。ID のタスクを、状態から正しく探して Finish に渡す
   function FinishTask(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis): Result<State>
   {
-    match FinishArgsError(reason, actor)
-    case Some(e) => Err(e)
-    case None =>
-      match FindIndex(st.tasks, id)
-      case None => Err(NotFound)
-      case Some(i) =>
-        match Finish(st.tasks[i], o, reason, actor, now)
-        case Err(e) => Err(e)
-        case Ok((t, e)) => Ok(State(st.tasks[i := t], st.events + [e]))
+    match Finish(Lookup(st, id), o, reason, actor, now)
+    case Err(e) => Err(e)
+    case Ok((t, e)) =>
+      FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
+      var i := FindIndex(st.tasks, id).value;
+      Ok(State(st.tasks[i := t], st.events + [e]))
+  }
+
+  // Finish が成功するのは、タスクがあるときだけ
+  lemma FinishOkHasTask(found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    ensures Finish(found, o, reason, actor, now).Ok? ==> found.Some?
+  {
   }
 
   // そのタスクのイベント（記録した順）
@@ -243,11 +271,102 @@ module Quenta {
          + (if events[|events| - 1].taskId == id then [events[|events| - 1]] else [])
   }
 
+  // 詳細（手本）。ID のタスクを、状態から正しく探して ShowTask に渡す
   function Show(st: State, id: string): Result<(Task, seq<Event>)>
   {
-    match FindIndex(st.tasks, id)
-    case None => Err(NotFound)
-    case Some(i) => Ok((st.tasks[i], EventsOf(st.events, id)))
+    match ShowTask(Lookup(st, id))
+    case Err(e) => Err(e)
+    case Ok(t) => Ok((t, EventsOf(st.events, id)))
+  }
+
+  // 前提: DB は、仕様の関数（NewTask・Finish）の結果を、手本（Add・FinishTask）と同じ形で反映する。
+  // エラーなら何も変えない。登録が成功なら、タスクとイベントを末尾に 1 件ずつ足す。
+  // 完了・中止が成功なら、同じ ID のタスクを返したタスクに置き換え、イベントを末尾に 1 件足す。ほかは変えない
+  predicate AppliedLikeModel(st: State, st': State, r: Result<(Task, Event)>, isNew: bool)
+  {
+    match r
+    case Err(_) => st' == st
+    case Ok((t, e)) =>
+      if isNew then st' == State(st.tasks + [t], st.events + [e])
+      else exists i :: 0 <= i < |st.tasks| && st.tasks[i].id == t.id && st' == State(st.tasks[i := t], st.events + [e])
+  }
+
+  // Go が渡した「ID が使われているか」が DB と一致すれば（IdTakenObserved）、実装の NewTask の結果は手本の Add が使う結果と同じ
+  lemma ImplNewTaskSameResult(st: State, id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis)
+    requires IdTakenObserved(st, id, idTaken)
+    ensures NewTask(id, idTaken, title, body, actor, now) == NewTask(id, FindIndex(st.tasks, id).Some?, title, body, actor, now)
+  {
+  }
+
+  // Go が渡した「探したタスク」が DB と一致すれば（FoundObserved）、実装の Finish の結果は手本の FinishTask が使う結果と同じ
+  lemma ImplFinishSameResult(st: State, id: string, found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    requires FoundObserved(st, id, found)
+    ensures Finish(found, o, reason, actor, now) == Finish(Lookup(st, id), o, reason, actor, now)
+  {
+  }
+
+  // 実装の登録の後の DB の状態。Go が渡した「ID が使われているか」が DB と一致し（IdTakenObserved）、
+  // DB が NewTask の結果を手本と同じ形で反映すれば（AppliedLikeModel）、
+  // 新しい状態は、手本の Add が成功ならその結果、エラーならもとの状態と同じ
+  lemma ImplAddMatchesModel(st: State, st': State, id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis)
+    requires IdTakenObserved(st, id, idTaken)
+    requires AppliedLikeModel(st, st', NewTask(id, idTaken, title, body, actor, now), true)
+    ensures Add(st, id, title, body, actor, now).Ok? ==> st' == Add(st, id, title, body, actor, now).value
+    ensures Add(st, id, title, body, actor, now).Err? ==> st' == st
+  {
+  }
+
+  // 実装の完了・中止の後の DB の状態。ID が重ならない状態で、Go が渡した「探したタスク」が DB と一致し（FoundObserved）、
+  // DB が Finish の結果を手本と同じ形で反映すれば（AppliedLikeModel）、
+  // 新しい状態は、手本の FinishTask が成功ならその結果、エラーならもとの状態と同じ
+  lemma ImplFinishMatchesModel(st: State, st': State, id: string, found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    requires UniqueIds(st)
+    requires FoundObserved(st, id, found)
+    requires AppliedLikeModel(st, st', Finish(found, o, reason, actor, now), false)
+    ensures FinishTask(st, id, o, reason, actor, now).Ok? ==> st' == FinishTask(st, id, o, reason, actor, now).value
+    ensures FinishTask(st, id, o, reason, actor, now).Err? ==> st' == st
+  {
+    if FinishTask(st, id, o, reason, actor, now).Ok? {
+      FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
+      var r := Finish(found, o, reason, actor, now).value;
+      var k := FindIndex(st.tasks, id).value;
+      assert r.0.id == id;
+      var i :| 0 <= i < |st.tasks| && st.tasks[i].id == r.0.id && st' == State(st.tasks[i := r.0], st.events + [r.1]);
+      assert i == k;
+    }
+  }
+
+  // 実装の詳細。Go が渡した「探したタスク」が DB と一致すれば（FoundObserved）、実装の ShowTask の結果は手本と同じ
+  lemma ImplShowMatchesModel(st: State, id: string, found: Option<Task>)
+    requires FoundObserved(st, id, found)
+    ensures ShowTask(found) == ShowTask(Lookup(st, id))
+  {
+  }
+
+  // 実装の登録は、DB の状態の不変条件を保つ（帰納法の一歩）。前提は ImplAddMatchesModel と同じ
+  lemma ImplAddPreservesValid(st: State, st': State, id: string, idTaken: bool, title: string, body: string, actor: string, now: UnixMillis)
+    requires Valid(st)
+    requires IdTakenObserved(st, id, idTaken)
+    requires AppliedLikeModel(st, st', NewTask(id, idTaken, title, body, actor, now), true)
+    ensures Valid(st')
+  {
+    ImplAddMatchesModel(st, st', id, idTaken, title, body, actor, now);
+    if Add(st, id, title, body, actor, now).Ok? {
+      AddPreservesValid(st, id, title, body, actor, now);
+    }
+  }
+
+  // 実装の完了・中止は、DB の状態の不変条件を保つ（帰納法の一歩）。前提は ImplFinishMatchesModel と同じ
+  lemma ImplFinishPreservesValid(st: State, st': State, id: string, found: Option<Task>, o: Outcome, reason: string, actor: string, now: UnixMillis)
+    requires Valid(st)
+    requires FoundObserved(st, id, found)
+    requires AppliedLikeModel(st, st', Finish(found, o, reason, actor, now), false)
+    ensures Valid(st')
+  {
+    ImplFinishMatchesModel(st, st', id, found, o, reason, actor, now);
+    if FinishTask(st, id, o, reason, actor, now).Ok? {
+      FinishPreservesValid(st, id, o, reason, actor, now);
+    }
   }
 
   // 一覧: 一覧に出すタスクを、作成日時の古い順に並べる。作成日時が同じなら登録した順
@@ -332,13 +451,6 @@ module Quenta {
   // ---------- 不変条件 ----------
 
   // どの 2 つのタスクも ID が違う
-  // 重要度: 高。守るもの: DB の制約（tasks.id の一意の制約）とテスト。
-  // 根拠: 実装は Add を通らない。ID が重なる保存は一意の制約で拒まれ、実装は ID を作り直す。
-  // テスト: Test既にあるIDで保存しようとするとid_conflictを返し既存のタスクもイベントも変わらない（制約）、
-  // Test作ったIDが既にあれば作り直して登録し既存のタスクは変わらない（ID の作り方を差し替えてわざと重ねる）、
-  // TestIDが既にあるものしか作れなければinternalを返し何も登録しない、
-  // Test無作為な操作の列で実装は仕様の手本と同じ結果になり仕様の性質が成り立つ（少ない候補の ID で重ねる）。
-  // 変異テスト: 上書きで保存する、作り直さない、と壊すと落ちることを確かめた
   predicate UniqueIds(st: State)
   {
     forall i, j :: 0 <= i < j < |st.tasks| ==> st.tasks[i].id != st.tasks[j].id
@@ -371,27 +483,19 @@ module Quenta {
     && evs[|evs| - 1].to == t.status
   }
 
-  // 全体の不変条件。条件ごとの守り方:
-  // - UniqueIds: 上の UniqueIds のコメントを参照
-  // - タイトルが空でない: ValidTask のコメントを参照
-  // - イベントの形が正しい（重要度: 高）: 証明（NewTask・Finish。補題 NewTaskResult・FinishOneResult）。実装が保存するイベントは NewTask か Finish が返したものだけ
-  // - イベントの対象のタスクがある（重要度: 高）: DB の制約（events.task_id の外部キー）。
-  //   テスト: Test存在しないタスクを指すイベントは外部キーの制約で保存できない
-  // - タスクの経緯が正しい（重要度: 高）: 証明（NewTask・Finish。補題 NewTaskResult は登録のイベントだけで経緯が正しいこと、
-  //   FinishOneResult は正しい経緯にイベントを足しても正しいこと）と、DB の制約（イベントは追記だけ、EventsAppendOnly を参照）。
-  //   状態の書き換えに必ずイベントが伴うことは、Go の作りとテストで守る（FinishOneResult のコメントを参照。人が了承した）
-  // 実装の状態でこの不変条件が成り立つことは、テスト（Test無作為な操作の列で…）でも、実装から読み出した状態に Valid を当てて確かめる。
-  // この判定が見分けられることは、TestValidStateは不変条件を破る状態をfalseにする で確かめる
+  // 全体の不変条件: ID が重ならない、タイトルが空でない、イベントの形が正しく対象のタスクがある、どのタスクも経緯が正しい。
+  // 実装では「DB の状態がこれを満たす」ことを前提にする（DB が、証明した操作の結果だけで変わることによる）
   predicate Valid(st: State)
   {
     UniqueIds(st)
-    && (forall t :: t in st.tasks ==> !IsBlank(t.title))
+    && (forall t :: t in st.tasks ==> ValidTask(t))
     && (forall e :: e in st.events ==> WellFormedEvent(e) && HasTask(st, e.taskId))
     && (forall t :: t in st.tasks ==> HistoryMatches(t, EventsOf(st.events, t.id)))
   }
 
-  // ---------- 性質 ----------
+  // ---------- 全体の状態の性質 ----------
 
+  // 空の状態は不変条件を満たす（帰納法の出発点）
   lemma EmptyIsValid()
     ensures Valid(Empty)
   {
@@ -420,7 +524,7 @@ module Quenta {
     }
   }
 
-  // 登録は不変条件を保つ（手本。実装での守り方は Valid のコメントを参照）
+  // 登録は不変条件を保つ
   lemma AddPreservesValid(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis)
     requires Valid(st)
     requires Add(st, id, title, body, actor, now).Ok?
@@ -431,6 +535,8 @@ module Quenta {
     var e := st'.events[|st'.events| - 1];
     assert st'.tasks == st.tasks + [t];
     assert st'.events == st.events + [e];
+    assert t.id == id && e.taskId == id;
+    assert FindIndex(st.tasks, id).None?;
     EventsOfNone(st.events, id);
     forall u | u in st'.tasks
       ensures HistoryMatches(u, EventsOf(st'.events, u.id))
@@ -449,13 +555,14 @@ module Quenta {
     }
   }
 
-  // 完了・中止は不変条件を保つ（手本。実装での守り方は Valid のコメントを参照）
+  // 完了・中止は不変条件を保つ
   lemma FinishPreservesValid(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     requires Valid(st)
     requires FinishTask(st, id, o, reason, actor, now).Ok?
     ensures Valid(FinishTask(st, id, o, reason, actor, now).value)
   {
     var st' := FinishTask(st, id, o, reason, actor, now).value;
+    FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
     var i := FindIndex(st.tasks, id).value;
     var e := st'.events[|st'.events| - 1];
     assert st'.events == st.events + [e];
@@ -479,7 +586,7 @@ module Quenta {
       assert st'.tasks[j].id == st.tasks[j].id;
     }
     forall u | u in st'.tasks
-      ensures !IsBlank(u.title)
+      ensures ValidTask(u)
     {
       var k :| 0 <= k < |st'.tasks| && st'.tasks[k] == u;
       assert st.tasks[k] in st.tasks;
@@ -487,14 +594,6 @@ module Quenta {
   }
 
   // 登録の結果（手本）: 登録したタスクとイベントが末尾に 1 件ずつ増え、既存のものは変わらない
-  // 重要度: 高（既存のタスクが書き換わるとデータが壊れる）。
-  // 守るもの: 証明（NewTask。補題 NewTaskResult。足すタスクとイベントの中身）、DB の制約（tasks.id の一意の制約は同じ ID の 2 件目を拒む。
-  // 上書き（INSERT OR REPLACE）による削除は、tasks の削除を拒むトリガー（tasks_no_delete。recursive_triggers を有効にして、上書きによる削除でも起動させる）が拒む。
-  // UPDATE による上書きは、tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）が拒む）、テスト（Test上書きで保存しようとすると拒まれる）。
-  // todo のタスクの状態の書き換えは、トリガーでは拒めない（終わったタスクは FinishRejectsFinished のトリガーが拒む）。FinishOneResult のコメントの「状態の書き換えには、必ず対応するイベントが伴う」の
-  // 守り方（Go の作りとテスト。人が了承した）による
-  // 根拠: 実装は Add を通らず、INSERT で 1 行足すだけ。テスト: Test既にあるIDで保存しようとするとid_conflictを返し既存のタスクもイベントも変わらない、
-  // Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）
   lemma AddResult(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis)
     requires Add(st, id, title, body, actor, now).Ok?
     ensures var st' := Add(st, id, title, body, actor, now).value;
@@ -503,25 +602,8 @@ module Quenta {
   {
   }
 
-  // 登録のエラーの条件（手本）。主体 → タイトル → ID の重なりの順に判定する
-  // 重要度: 中。守るもの: 証明（NewTask。補題 NewTaskResult。主体とタイトル）と、ID の重なりは UniqueIds のコメントを参照
-  lemma AddErrors(st: State, id: string, title: string, body: string, actor: string, now: UnixMillis)
-    ensures IsBlank(actor) ==> Add(st, id, title, body, actor, now) == Err(SessionRequired)
-    ensures !IsBlank(actor) && IsBlank(title) ==> Add(st, id, title, body, actor, now) == Err(TitleRequired)
-    ensures !IsBlank(actor) && !IsBlank(title) && HasTask(st, id) ==> Add(st, id, title, body, actor, now) == Err(IdConflict)
-    ensures !IsBlank(actor) && !IsBlank(title) && !HasTask(st, id) ==> Add(st, id, title, body, actor, now).Ok?
-  {
-  }
-
   // 完了・中止の結果（手本）: 対象のタスクだけが変わり、イベントが末尾に 1 件増える
-  // 重要度: 高（ほかのタスクが書き換わるとデータが壊れる）。
-  // 守るもの: 証明（Finish。補題 FinishOneResult。対象の変わり方とイベントの中身）、DB の制約（tasks.id の一意の制約）、テスト（ほかのタスクが変わらないこと）。
-  // 根拠: 実装は FinishTask を通らず、ID を条件に 1 行だけ書き換える。ID は一意の制約で重ならないので、条件に合うのは 1 行だけ。
-  // 実装は、書き換えた行がちょうど 1 行であることを実行時に確かめ、違えばエラーにしてトランザクションを取り消す。
-  // 「ID を条件にする」ことは Go と SQL にあり、テストで守る（2026-10-25 の仕様のレビューで、人が了承した）。条件が外れても、終わったタスクへの書き換えは
-  // 終わったタスクの書き換えを拒むトリガー（tasks_finished_frozen）が拒む。
-  // テスト: Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）。変異テスト: 書き換えの条件を外すと AC04・05・06・10 ほかが落ちることを確かめた
-  lemma FinishResult(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
+  lemma FinishTaskResult(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     requires Valid(st)
     requires FinishTask(st, id, o, reason, actor, now).Ok?
     ensures var st' := FinishTask(st, id, o, reason, actor, now).value;
@@ -532,34 +614,13 @@ module Quenta {
             else st'.tasks[k] == st.tasks[k])
       && st'.events == st.events + [Event(id, actor, Some(st.tasks[FindIndex(st.tasks, id).value].status), OutcomeStatus(o), Some(reason), now)]
   {
+    FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
     var i := FindIndex(st.tasks, id).value;
     assert st.tasks[i] in st.tasks;
   }
 
-  // 完了・中止のエラーの条件（手本）。主体 → 理由 → ID の有無 → 終わっているか、の順に判定する
-  // 重要度: 中（受け入れ条件 9〜11）。守るもの: 証明（FinishArgsError・Finish。補題 FinishArgsErrorResult・FinishOneResult）とテスト。
-  // 根拠: 引数の判定と、終わっているかの判定は、実装が呼ぶ関数にある。引数の判定をタスクを探す前に行う順と、
-  // ID がなければ NotFound を返すことは、Go と SQL で行うのでテストで守る。
-  // テスト: Test完了と中止は引数の誤りをタスクを探す前に返す、Test存在しないIDを読むとnot_foundを返す、Test無作為な操作の列で…。
-  // 変異テスト: 引数の判定を先にしない、ID がないときに not_found 以外を返す、と壊すとそれぞれ落ちることを確かめた
-  lemma FinishErrors(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
-    ensures IsBlank(actor) ==> FinishTask(st, id, o, reason, actor, now) == Err(SessionRequired)
-    ensures !IsBlank(actor) && IsBlank(reason) ==> FinishTask(st, id, o, reason, actor, now) == Err(ReasonRequired)
-    ensures !IsBlank(actor) && !IsBlank(reason) && !HasTask(st, id) ==> FinishTask(st, id, o, reason, actor, now) == Err(NotFound)
-    ensures !IsBlank(actor) && !IsBlank(reason) && HasTask(st, id) ==>
-      (FinishTask(st, id, o, reason, actor, now) == Err(AlreadyFinished)
-       <==> IsFinished(st.tasks[FindIndex(st.tasks, id).value].status))
-  {
-    if !IsBlank(actor) && !IsBlank(reason) && HasTask(st, id) {
-      var i :| 0 <= i < |st.tasks| && st.tasks[i].id == id;
-      assert FindIndex(st.tasks, id).Some?;
-    }
-  }
-
   // 終わったタスクは、どの操作でも変わらない（手本）
-  // 実装での守り方は、完了・中止は FinishRejectsFinished、登録は AddResult のコメントを参照
   lemma FinishedTasksNeverChange(st: State, k: nat)
-    requires Valid(st)
     requires k < |st.tasks| && IsFinished(st.tasks[k].status)
     ensures forall id, title, body, actor, now :: Add(st, id, title, body, actor, now).Ok? ==>
       Add(st, id, title, body, actor, now).value.tasks[k] == st.tasks[k]
@@ -569,6 +630,7 @@ module Quenta {
     forall id, o, reason, actor, now | FinishTask(st, id, o, reason, actor, now).Ok?
       ensures FinishTask(st, id, o, reason, actor, now).value.tasks[k] == st.tasks[k]
     {
+      FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
       var i := FindIndex(st.tasks, id).value;
       if i == k {
         assert false;
@@ -577,16 +639,6 @@ module Quenta {
   }
 
   // タスクは消えない（手本）: 登録でも完了・中止でも、既存のタスクは同じ位置（登録した順）に同じ ID で残る
-  // 重要度: 高。守るもの: DB の制約（tasks の削除を拒むトリガー（tasks_no_delete。recursive_triggers を有効にして、上書きによる削除でも起動させる）、
-  // tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes））とテスト。
-  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testタスクは削除できない、Test上書きで保存しようとすると拒まれる、
-  // Testタスクの状態以外の列は書き換えられない、
-  // Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）。
-  // 新しいタスクが既存のタスクより後ろの位置に入ること（既存のタスクの位置がずれないこと）は、今の DB の制約では拒まない
-  //（拒むトリガーは足さないと人が決めた。#21）。
-  // Go の作り（保存の層はタスクの番号（tasks.seq）を指定せず、AUTOINCREMENT が今までより大きい番号を振る）とテストで守る。
-  // 変異テスト: 番号を指定して先頭に入れるよう壊すと、一覧の並び順のテストほかが落ちることを確かめた。
-  // 重要度 高をテストで守る部分（2026-10-25 に人が了承した）
   lemma TasksNeverDisappear(st: State, id: string, title: string, body: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures Add(st, id, title, body, actor, now).Ok? ==>
       var ts := Add(st, id, title, body, actor, now).value.tasks;
@@ -595,21 +647,12 @@ module Quenta {
       var ts := FinishTask(st, id, o, reason, actor, now).value.tasks;
       |ts| == |st.tasks| && forall k :: 0 <= k < |st.tasks| ==> ts[k].id == st.tasks[k].id
   {
+    if FinishTask(st, id, o, reason, actor, now).Ok? {
+      FinishOkHasTask(Lookup(st, id), o, reason, actor, now);
+    }
   }
 
   // イベントは追記だけ（手本）: 登録でも完了・中止でも、既存のイベントは消えず書き換わらず、末尾に 1 件増える
-  // 重要度: 高（経緯を残す）。守り方は部分ごとに分かれる。
-  // - 既存のイベントが消えず書き換わらない: DB の制約（events の書き換えと削除を拒むトリガー（events_no_update・events_no_delete））。
-  //   テスト: Testイベントは書き換えも削除もできない
-  // - 末尾に足される: Go の作り（保存の層はイベントの番号（events.seq）を指定せず、AUTOINCREMENT が今までより大きい番号を振る）とテスト。
-  //   番号を指定した挿入は、今の DB の制約では拒まない（拒むトリガーは足さないと人が決めた。#21）。テスト: Test無作為な操作の列で…（毎歩、記録した順を手本と比べる）。
-  //   変異テスト: 番号を指定して先頭に入れるよう壊すと、AC07・AC08・Test無作為な操作の列で… ほかが落ちることを確かめた。
-  //   重要度 高をテストで守る部分（2026-10-25 に人が了承した）
-  // - 1 回の操作で 1 件だけ足される: Go の作り（tasks と events に書き込むのは保存の層の 1 つの関数だけで、イベントを 1 件だけ書く）とテスト。
-  //   テスト: Test無作為な操作の列で…（毎歩、イベントの数と中身を手本と比べ、それまでのイベントが先頭にそのまま残ることを確かめる）。
-  //   変異テスト: 完了・中止でイベントを 2 件書くよう壊すと、AC07・AC08・Test無作為な操作の列で… ほかが落ちることを確かめた。
-  //   重要度 高をテストで守る部分（2026-10-25、「状態の書き換えに必ずイベントが伴う」の了承に含めることを人が了承した）
-  // 根拠: 実装は Add・FinishTask を通らない
   lemma EventsAppendOnly(st: State, id: string, title: string, body: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures Add(st, id, title, body, actor, now).Ok? ==>
       var ev := Add(st, id, title, body, actor, now).value.events;
@@ -620,23 +663,18 @@ module Quenta {
   {
   }
 
-  // 一覧（手本）: ID が重ならない状態で、一覧に出すタスクがちょうど 1 回ずつ、作成日時の古い順（同じなら登録した順）に並ぶ
-  // 守り方は部分ごとに分かれる。
-  // - どのタスクを出すかの 1 件ごとの判定（重要度: 中）: IsVisible の定義（実装はこの述語で判定する）
-  // - 全件を 1 回ずつ出すこと（重要度: 中。受け入れ条件 4・5）: テスト。実装は全件を DB から読み、1 件ずつ判定する。
-  //   テスト: Test無作為な操作の列で…（一覧を手本と比べる）、AC04・AC05。変異テスト: 1 件飛ばすと AC05 ほかが落ちることを確かめた
-  // - 並び順（重要度: 低）: テスト。実装は SQL で並べる。作成日時が同じときの「登録した順」は tasks.seq で、その守り方は TasksNeverDisappear を参照。テスト: Test一覧は作成日時の古い順で作成日時が同じなら登録した順に返す、Test無作為な操作の列で…
+  // 一覧（手本）: ID が重ならない状態で、一覧に出すタスクがちょうど 1 回ずつ、作成日時の古い順（同じなら登録した順）に並ぶ。
   // 全体を一度に証明させると、証明器の乱数の種によって数秒から 2 分以上までばらつき、CI で時間切れになった（#16）。
   // 主張ごとに分けると、どの種でも 1 件 0.3 秒以内で終わる
   lemma {:isolate_assertions} ListOrdered(st: State, includeFinished: bool)
     requires UniqueIds(st)
-    ensures var r := List(st, includeFinished);
-      (forall t :: t in r ==> t in st.tasks && IsVisible(t, includeFinished))
-      && (forall t :: t in st.tasks && IsVisible(t, includeFinished) ==> t in r)
-      && (forall i, j :: 0 <= i < j < |r| ==> r[i].createdAt <= r[j].createdAt)
-      && (forall i, j :: 0 <= i < j < |r| && r[i].createdAt == r[j].createdAt ==>
-            exists p, q :: 0 <= p < q < |st.tasks| && st.tasks[p] == r[i] && st.tasks[q] == r[j])
-      && (forall i, j :: 0 <= i < j < |r| ==> r[i].id != r[j].id)
+    ensures forall t :: t in List(st, includeFinished) ==> t in st.tasks && IsVisible(t, includeFinished)
+    ensures forall t :: t in st.tasks && IsVisible(t, includeFinished) ==> t in List(st, includeFinished)
+    ensures forall i, j :: 0 <= i < j < |List(st, includeFinished)| ==> List(st, includeFinished)[i].id != List(st, includeFinished)[j].id
+    ensures forall i, j :: 0 <= i < j < |List(st, includeFinished)| ==>
+      List(st, includeFinished)[i].createdAt <= List(st, includeFinished)[j].createdAt
+    ensures forall i, j :: 0 <= i < j < |List(st, includeFinished)| && List(st, includeFinished)[i].createdAt == List(st, includeFinished)[j].createdAt ==>
+      exists p, q :: 0 <= p < q < |st.tasks| && st.tasks[p] == List(st, includeFinished)[i] && st.tasks[q] == List(st, includeFinished)[j]
   {
     var picked := Pick(st.tasks, includeFinished, 0);
     PickPositions(st.tasks, includeFinished, 0);
