@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -50,6 +51,7 @@ type sandbox struct {
 	cwd     string
 	session string
 	noXDG   bool
+	extra   []string // 追加の環境変数（KEY=VALUE）
 }
 
 func newSandbox(t *testing.T) *sandbox {
@@ -73,6 +75,7 @@ func (s *sandbox) quenta(args ...string) result {
 	if s.session != "" {
 		cmd.Env = append(cmd.Env, "QUENTA_SESSION="+s.session)
 	}
+	cmd.Env = append(cmd.Env, s.extra...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -433,4 +436,66 @@ func walk(t *testing.T, root string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// 受け入れ条件ではなく、CLAUDE.md の実装の制約「特定のエージェントに依存しない」を確かめる
+func Test主体はQUENTA_SESSIONだけから読みエージェント固有の環境変数は読まない(t *testing.T) {
+	agentVars := []string{"CLAUDE_CODE_SESSION_ID=claude-session", "CLAUDE_SESSION_ID=claude-session"}
+
+	// QUENTA_SESSION がなければ、エージェント固有の環境変数があっても主体がないとみなす
+	s := newSandbox(t)
+	s.session = ""
+	s.extra = agentVars
+	failsWith(t, s.quenta("task", "add", "--title", "A"), "session_required")
+
+	// 両方あれば、主体は QUENTA_SESSION の値そのもの
+	s = newSandbox(t)
+	s.extra = agentVars
+	tk := s.add("A")
+	ok[any](t, s.quenta("task", "done", tk.ID, "--reason", "r"))
+	for _, e := range s.show(tk.ID).Events {
+		if e.Actor != "session-1" {
+			t.Errorf("主体 = %q, want %q", e.Actor, "session-1")
+		}
+	}
+}
+
+// 受け入れ条件ではなく、CLAUDE.md の実装の制約「git を前提にしない」「対話的な入力をしない」を確かめる。
+// PATH を空にして git を含むほかのコマンドを呼べなくし、標準入力は開いたまま何も書かない
+func Test外部のコマンドを呼ばず標準入力を待たずにすべての操作が終わる(t *testing.T) {
+	s := newSandbox(t)
+	run := func(args ...string) result {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = s.cwd
+		cmd.Env = []string{"HOME=" + s.home, "PATH=", "XDG_DATA_HOME=" + s.data, "QUENTA_SESSION=" + s.session}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stdin.Close()
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err = cmd.Run()
+		if ctx.Err() != nil {
+			t.Fatalf("%v: 10 秒で終わらなかった（入力を待っている）", args)
+		}
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("起動できない: %v", err)
+		}
+		return result{code, stdout.Bytes(), stderr.Bytes()}
+	}
+	tk := ok[struct {
+		Task taskJSON `json:"task"`
+	}](t, run("task", "add", "--title", "A", "--body", "b")).Task
+	ok[any](t, run("task", "list", "--all"))
+	ok[any](t, run("task", "show", tk.ID))
+	ok[any](t, run("task", "done", tk.ID, "--reason", "r"))
+	failsWith(t, run("task", "cancel", tk.ID, "--reason", "r"), "already_finished")
+	failsWith(t, run("task", "add"), "title_required")
 }
