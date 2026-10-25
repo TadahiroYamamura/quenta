@@ -461,16 +461,18 @@ func Test主体はQUENTA_SESSIONだけから読みエージェント固有の環
 }
 
 // 受け入れ条件ではなく、CLAUDE.md の実装の制約「git を前提にしない」「対話的な入力をしない」を確かめる。
-//   - PATH には、呼ばれたら印のファイルを書くだけの偽の git だけを置く。ほかのコマンドは呼べない
+//   - PATH には、呼ばれたら印のファイルを書くだけの偽の git だけを置く。PATH から探すコマンドは、偽の git のほかは呼べない
 //   - 作業ディレクトリに偽の .git/ を置き、操作の前後で中身と更新日時が変わらないことを確かめる
 //   - 標準入力は開いたまま何も書かない。入力を待てば時間切れで落ちる
 //
-// .git/ を読んで結果を捨てる実装は、外から観察できないので見分けられない
+// 次の実装は、.git/ を変えず外から観察できないので見分けられない
+//   - .git/ を読んで結果を捨てる
+//   - 絶対パスで本物の git の読み取りだけのコマンド（rev-parse など）を呼ぶ
 func Test操作の間にgitを呼ばず_gitディレクトリを変えず標準入力を待たない(t *testing.T) {
 	s := newSandbox(t)
 	binDir := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "git-was-called")
-	fakeGit := "#!/bin/sh\necho \"$@\" >> " + marker + "\n"
+	fakeGit := "#!/bin/sh\necho \"$@\" >> '" + marker + "'\n"
 	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(fakeGit), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +494,14 @@ func Test操作の間にgitを呼ばず_gitディレクトリを変えず標準�
 	}
 	// 更新日時の変化を見分けられるよう、過去の日時にそろえる
 	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	filepath.WalkDir(gitDir, func(path string, _ fs.DirEntry, _ error) error { return os.Chtimes(path, past, past) })
+	if err := filepath.WalkDir(gitDir, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, past, past)
+	}); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshot(t, gitDir)
 
 	run := func(args ...string) result {
