@@ -452,7 +452,9 @@ module Quenta {
   }
 
   // 一覧: 一覧に出すタスクがちょうど 1 回ずつ、作成日時の古い順（同じなら登録した順）に並ぶ
-  lemma ListOrdered(st: State, includeFinished: bool)
+  // 全体を一度に証明させると、証明器の乱数の種によって数秒から 2 分以上までばらつき、CI で時間切れになった（#16）。
+  // 主張ごとに分けると、どの種でも 1 件 0.3 秒以内で終わる
+  lemma {:isolate_assertions} ListOrdered(st: State, includeFinished: bool)
     requires UniqueIds(st)
     ensures var r := List(st, includeFinished);
       (forall t :: t in r ==> t in st.tasks && IsVisible(t, includeFinished))
