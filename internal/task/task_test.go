@@ -30,7 +30,7 @@ func TestIsBlankは空文字列と空白だけの文字列を空とみなし文�
 		{" \t\r\n　", true}, // 全角の空白を含む
 		{"a", false},
 		{"  a  ", false},
-		{"​", false}, // ゼロ幅スペースは空白ではない
+		{"\u200b", false}, // ゼロ幅スペースは空白ではない
 	}
 	for _, c := range cases {
 		if got := IsBlank(c.in); got != c.want {

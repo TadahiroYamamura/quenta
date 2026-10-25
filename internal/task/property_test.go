@@ -16,7 +16,7 @@ import (
 const propRuns = 2000
 
 var (
-	propPieces   = []string{"", " ", "\t", "\n", "　", " ", "​", "a", "タスク", "🎉", "\"", "\x00"}
+	propPieces   = []string{"", " ", "\t", "\n", "　", "\u00a0", "\u200b", "a", "タスク", "🎉", "\"", "\x00"}
 	propStatuses = []Status{StatusTodo, StatusDone, StatusCanceled}
 	propOutcomes = []Outcome{OutcomeComplete, OutcomeCancel}
 )
