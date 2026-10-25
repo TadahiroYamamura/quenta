@@ -208,10 +208,7 @@ func (s *Store) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return err
 	}
 	if err := fn(tx); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			return errors.Join(err, rbErr)
-		}
-		return err
+		return errors.Join(err, tx.Rollback())
 	}
 	return tx.Commit()
 }
