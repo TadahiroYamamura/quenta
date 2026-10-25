@@ -65,8 +65,11 @@ func Errorf(code Code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// CodeOf は、err のエラーコードを返す。Error でないエラーは internal
+// CodeOf は、err のエラーコードを返す。エラーがなければ空、Error でないエラーは internal
 func CodeOf(err error) Code {
+	if err == nil {
+		return ""
+	}
 	if e, ok := errors.AsType[*Error](err); ok {
 		return e.Code
 	}

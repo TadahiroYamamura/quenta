@@ -105,7 +105,7 @@ func Test未知の終わらせ方は完了にも中止にもできずエラー�
 	}
 }
 
-func TestCodeOfはErrorのコードを返しそれ以外のエラーはinternalにする(t *testing.T) {
+func TestCodeOfはErrorのコードを返しそれ以外のエラーはinternalにしエラーがなければ空を返す(t *testing.T) {
 	if got := CodeOf(Errorf(CodeNotFound, "x")); got != CodeNotFound {
 		t.Errorf("got %s", got)
 	}
@@ -115,6 +115,10 @@ func TestCodeOfはErrorのコードを返しそれ以外のエラーはinternal�
 	}
 	if got := CodeOf(errors.New("plain")); got != CodeInternal {
 		t.Errorf("got %s", got)
+	}
+	// エラーがないときに internal を返すと、internal を確かめるテストがすり抜ける（#17）
+	if got := CodeOf(nil); got != "" {
+		t.Errorf("nil: got %q", got)
 	}
 }
 
