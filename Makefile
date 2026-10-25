@@ -11,9 +11,9 @@ BIN := bin/quenta
 # go.mod より新しい Go を勝手に取得させない（道具の版は flake.lock で固定している）
 export GOTOOLCHAIN := local
 
-GO_SOURCES := $(shell find cmd internal -name '*.go' -not -path '$(GEN_DIR)/*' 2>/dev/null) go.mod go.sum
+GO_SOURCES := $(shell find cmd internal db -name '*.go' -not -path '$(GEN_DIR)/*' 2>/dev/null) db/schema.sql go.mod go.sum
 
-.PHONY: all generate build install verify test check mutation clean
+.PHONY: all generate build install verify guarantees test check mutation clean
 
 all: build
 
@@ -46,17 +46,25 @@ verify:
 	dafny verify $(SPEC)
 
 test: $(GEN_STAMP)
-	@unformatted=$$(gofmt -l cmd internal e2e | grep -v '^$(GEN_DIR)/' || true); \
+	@unformatted=$$(gofmt -l cmd internal e2e db tools | grep -v '^$(GEN_DIR)/' || true); \
 	if [ -n "$$unformatted" ]; then echo "gofmt で整形されていない: $$unformatted"; exit 1; fi
 	go vet $$(go list ./... | grep -v '/$(GEN_DIR)/')
 	go test ./...
 
-check: verify test
+# 保証の対応表（spec/guarantees.toml）を、仕様・DB の構造・テストの印と突き合わせ、人が読む表を出す
+guarantees:
+	go run ./tools/guarantees check
 
-# AI が書いた Go を対象にする。Dafny から変換したコードとそのランタイムは外す。
-# -i で、壊した箇所のパッケージだけでなく E2E を含む全テストを実行する（CLI の誤りは E2E でも見つけるため）
+check: verify guarantees test mutation
+
+# 保証の対応表で決めた範囲（重要度が高の行と前提の行のうち、テスト・DB の制約・実行時の確認で守る行の code）を対象にする。
+# -i で、壊した箇所のパッケージだけでなく E2E を含む全テストを実行する。生き残りは spec/mutation-exclusions.toml と突き合わせる
 mutation: $(GEN_STAMP)
-	go tool gremlins unleash -i --exclude-files '^$(GEN_DIR)/'
+	out=$$(mktemp); \
+	go tool gremlins unleash -i --timeout-coefficient 10 --exclude-files '^$(GEN_DIR)/' \
+	  $$(go run ./tools/guarantees mutation-targets) -o $$out > /dev/null; \
+	go run ./tools/guarantees mutation-check $$out; \
+	status=$$?; rm -f $$out; exit $$status
 
 clean:
 	rm -rf $(GEN_DIR) bin
