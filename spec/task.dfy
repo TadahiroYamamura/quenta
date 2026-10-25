@@ -115,7 +115,7 @@ module Quenta {
   // 1 件のタスクの不変条件: タイトルが空でない
   // 重要度: 中。守るもの: 証明（NewTaskResult・FinishOneResult）と、DB から読んだときの確認。
   // 根拠: 実装が保存するタスクは、NewTask か Finish が返したものだけ。DB から読んだタスクは、Finish・IsVisible に渡す前に、
-  // 実装がこの述語で確かめ、満たさなければ internal のエラーにする（テスト: Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す（予定））
+  // 実装がこの述語で確かめ、満たさなければ internal のエラーにする（テスト: Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す）
   predicate ValidTask(t: Task)
   {
     !IsBlank(t.title)
@@ -151,9 +151,9 @@ module Quenta {
   }
 
   // 終わったタスクには、Finish は必ずエラーを返す（終わったタスクの状態は変えられない）
-  // 重要度: 高（受け入れ条件 10）。守るもの: 証明（Finish）と DB の制約（終わったタスクの書き換えを拒むトリガー（予定））。
+  // 重要度: 高（受け入れ条件 10）。守るもの: 証明（Finish）と DB の制約（終わったタスクの書き換えを拒むトリガー（tasks_finished_frozen））。
   // 根拠: 実装がタスクを書き換えるのは完了・中止だけで、DB から読んだタスクを必ず Finish に通し、Finish が Ok を返したときだけ保存する。
-  // この前提がコードの変更で崩れても、トリガーが拒む（テスト: Test終わったタスクは書き換えられない（予定））。
+  // この前提がコードの変更で崩れても、トリガーが拒む（テスト: Test終わったタスクは書き換えられない）。
   // エラーのときにタスクが変わらないこと（受け入れ条件 10 の後半）は、保存しないことで守る（テスト: Test変更がエラーを返すとタスクもイベントも保存しない）
   lemma FinishRejectsFinished(t: Task, o: Outcome, reason: string, actor: string, now: UnixMillis)
     requires IsFinished(t.status)
@@ -171,11 +171,14 @@ module Quenta {
   // 根拠: 実装の完了・中止は、Finish が返したタスクとイベントを 1 つのトランザクションで保存する
   //（テスト: Test変更がエラーを返すとタスクもイベントも保存しない、Testイベントを保存できなければタスクの変更も残らない）。
   // 「経緯が正しいまま」は、DB から読んだタスクとイベントで経緯が正しいことを前提にする。その前提の守り方:
-  // - ID・作成日時を書き換えない、イベントを消さず書き換えない: DB の制約（tasks の状態以外の列の書き換えを拒むトリガー（予定）、
-  //   events の書き換え・削除を拒むトリガー（予定））
-  // - タスクの状態の書き換えには、必ず対応するイベントが伴う: Go の作り（タスクを書き換えるのは完了・中止の 1 か所だけで、
-  //   状態とイベントを 1 つのトランザクションで保存する）とテスト（Test無作為な操作の列で…が毎歩、実装の状態に Valid を当てる。
-  //   上の 2 つのトランザクションのテスト）。変異テスト: 完了・中止でイベントを保存しないよう壊すと、AC07・AC08・AC12 ほかが落ちることを確かめた。
+  // - ID・作成日時を書き換えない、イベントを消さず書き換えない: DB の制約（tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）、
+  //   events の書き換え・削除を拒むトリガー（events_no_update・events_no_delete））
+  // - タスクの状態の書き換えには、必ず対応するイベントが伴う: Go の作りとテスト。
+  //   Go の作り: 保存の層が受け取るのは、Finish・NewTask が返したタスクとイベントの組（状態の変更）だけで、その値は仕様の関数の結果からしか作れない。
+  //   tasks と events に書き込むのは保存の層の 1 つの関数だけで、組を 1 つのトランザクションで続けて書く。
+  //   テスト: Test無作為な操作の列で…（毎歩、実装の状態に Valid を当てる）、Testイベントを保存できなければタスクの変更も残らない、
+  //   Test登録のイベントを保存できなければタスクも残らない、Test仕様の関数が作っていない状態の変更や別のタスクの変更は保存しない。
+  //   変異テスト: 完了・中止でイベントを保存しないよう壊すと、AC07・AC08・AC12 ほかが落ちることを確かめた。
   //   重要度 高をテストで守る部分（2026-10-25 の仕様のレビューで、人が了承した）
   lemma FinishOneResult(t: Task, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures FinishArgsError(reason, actor).Some? ==>
@@ -372,7 +375,7 @@ module Quenta {
   // - タイトルが空でない: ValidTask のコメントを参照
   // - イベントの形が正しい（重要度: 高）: 証明（NewTaskResult・FinishOneResult）。実装が保存するイベントは NewTask か Finish が返したものだけ
   // - イベントの対象のタスクがある（重要度: 高）: DB の制約（events.task_id の外部キー）。
-  //   テスト: Testイベントを保存できなければタスクの変更も残らない（存在しないタスクを指すイベントを外部キーが拒む）
+  //   テスト: Test存在しないタスクを指すイベントは外部キーの制約で保存できない
   // - タスクの経緯が正しい（重要度: 高）: 証明（NewTaskResult は登録のイベントだけで経緯が正しいこと、
   //   FinishOneResult は正しい経緯にイベントを足しても正しいこと）と、DB の制約（イベントは追記だけ、EventsAppendOnly を参照）。
   //   状態の書き換えに必ずイベントが伴うことは、Go の作りとテストで守る（FinishOneResult のコメントを参照。人が了承した）
@@ -485,8 +488,8 @@ module Quenta {
   // 登録の結果（手本）: 登録したタスクとイベントが末尾に 1 件ずつ増え、既存のものは変わらない
   // 重要度: 高（既存のタスクが書き換わるとデータが壊れる）。
   // 守るもの: 証明（NewTaskResult。足すタスクとイベントの中身）、DB の制約（tasks.id の一意の制約は同じ ID の 2 件目を拒む。
-  // 上書き（INSERT OR REPLACE）による削除は、tasks の削除を拒むトリガー（予定。recursive_triggers を有効にして、上書きによる削除でも起動させる）が拒む。
-  // UPDATE による上書きは、tasks の状態以外の列の書き換えを拒むトリガー（予定）が拒む）、テスト（Test上書きで保存しようとすると拒まれる（予定））。
+  // 上書き（INSERT OR REPLACE）による削除は、tasks の削除を拒むトリガー（tasks_no_delete。recursive_triggers を有効にして、上書きによる削除でも起動させる）が拒む。
+  // UPDATE による上書きは、tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes）が拒む）、テスト（Test上書きで保存しようとすると拒まれる）。
   // todo のタスクの状態の書き換えは、トリガーでは拒めない（終わったタスクは FinishRejectsFinished のトリガーが拒む）。FinishOneResult のコメントの「状態の書き換えには、必ず対応するイベントが伴う」の
   // 守り方（Go の作りとテスト。人が了承した）による
   // 根拠: 実装は Add を通らず、INSERT で 1 行足すだけ。テスト: Test既にあるIDで保存しようとするとid_conflictを返し既存のタスクもイベントも変わらない、
@@ -514,7 +517,7 @@ module Quenta {
   // 守るもの: 証明（FinishOneResult。対象の変わり方とイベントの中身）、DB の制約（tasks.id の一意の制約）、テスト（ほかのタスクが変わらないこと）。
   // 根拠: 実装は FinishTask を通らず、ID を条件に 1 行だけ書き換える。ID は一意の制約で重ならないので、条件に合うのは 1 行だけ。
   // 「ID を条件にする」ことは Go と SQL にあり、テストで守る（2026-10-25 の仕様のレビューで、人が了承した）。条件が外れても、終わったタスクへの書き換えは
-  // 終わったタスクの書き換えを拒むトリガー（予定）が拒む。
+  // 終わったタスクの書き換えを拒むトリガー（tasks_finished_frozen）が拒む。
   // テスト: Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）。変異テスト: 書き換えの条件を外すと AC04・05・06・10 ほかが落ちることを確かめた
   lemma FinishResult(st: State, id: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     requires Valid(st)
@@ -572,10 +575,10 @@ module Quenta {
   }
 
   // タスクは消えない（手本）: 登録でも完了・中止でも、既存のタスクは同じ位置（登録した順）に同じ ID で残る
-  // 重要度: 高。守るもの: DB の制約（tasks の削除を拒むトリガー（予定。recursive_triggers を有効にして、上書きによる削除でも起動させる）、
-  // tasks の状態以外の列の書き換えを拒むトリガー（予定））とテスト。
-  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testタスクは削除できない（予定）、Test上書きで保存しようとすると拒まれる（予定）、
-  // Testタスクの状態以外の列は書き換えられない（予定）、
+  // 重要度: 高。守るもの: DB の制約（tasks の削除を拒むトリガー（tasks_no_delete。recursive_triggers を有効にして、上書きによる削除でも起動させる）、
+  // tasks の状態以外の列の書き換えを拒むトリガー（tasks_only_status_changes））とテスト。
+  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testタスクは削除できない、Test上書きで保存しようとすると拒まれる、
+  // Testタスクの状態以外の列は書き換えられない、
   // Test無作為な操作の列で…（毎歩、実装の全タスクを手本と比べる）
   lemma TasksNeverDisappear(st: State, id: string, title: string, body: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures Add(st, id, title, body, actor, now).Ok? ==>
@@ -588,9 +591,9 @@ module Quenta {
   }
 
   // イベントは追記だけ（手本）: 登録でも完了・中止でも、既存のイベントは消えず書き換わらず、末尾に 1 件増える
-  // 重要度: 高（経緯を残す）。守るもの: 既存のイベントが消えず書き換わらないことは DB の制約（events の書き換えと削除を拒むトリガー（予定））、
+  // 重要度: 高（経緯を残す）。守るもの: 既存のイベントが消えず書き換わらないことは DB の制約（events の書き換えと削除を拒むトリガー（events_no_update・events_no_delete））、
   // 末尾に 1 件増えることはテスト。
-  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testイベントは書き換えも削除もできない（予定）、
+  // 根拠: 実装は Add・FinishTask を通らない。テスト: Testイベントは書き換えも削除もできない、
   // Test無作為な操作の列で…（毎歩、それまでのイベントが先頭にそのまま残ることを確かめる）
   lemma EventsAppendOnly(st: State, id: string, title: string, body: string, o: Outcome, reason: string, actor: string, now: UnixMillis)
     ensures Add(st, id, title, body, actor, now).Ok? ==>
