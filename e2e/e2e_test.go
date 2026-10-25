@@ -165,14 +165,6 @@ func (s *sandbox) list(args ...string) []summaryJSON {
 	}](s.t, s.quenta(append([]string{"task", "list"}, args...)...)).Tasks
 }
 
-func idsOf(ts []summaryJSON) []string {
-	out := []string{}
-	for _, t := range ts {
-		out = append(out, t.ID)
-	}
-	return out
-}
-
 var timeFormat = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
 func TestAC01_タスクをタイトルと本文で登録するとtodoのタスクとして保存されIDとタイトルと本文と状態と作成日時がJSONで返る(t *testing.T) {
@@ -228,41 +220,35 @@ func TestAC03_タイトルが空なら登録できずエラーコードが返る
 
 func TestAC04_一覧を見ると終わっていないタスクだけが返る(t *testing.T) {
 	s := newSandbox(t)
-	a := s.add("A")
+	a := s.add("A", "--body", "本文A")
 	b := s.add("B")
 	c := s.add("C")
 	d := s.add("D")
 	ok[any](t, s.quenta("task", "done", b.ID, "--reason", "済んだ"))
 	ok[any](t, s.quenta("task", "cancel", d.ID, "--reason", "要らない"))
-	got := s.list()
-	if !reflect.DeepEqual(idsOf(got), []string{a.ID, c.ID}) {
-		t.Errorf("got %v, want %v", idsOf(got), []string{a.ID, c.ID})
-	}
-	for _, x := range got {
-		if x.Status != "todo" {
-			t.Errorf("終わったタスクが入っている: %+v", x)
-		}
+	// 各項目は、登録したときに返った値と、すべての項目で一致する（本文は一覧に含まない）
+	want := []summaryJSON{summaryOf(a, "todo"), summaryOf(c, "todo")}
+	if got := s.list(); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
 	}
 }
 
 func TestAC05_終わったタスクも含めるよう指定するとすべてのタスクが返る(t *testing.T) {
 	s := newSandbox(t)
 	a := s.add("A")
-	b := s.add("B")
+	b := s.add("B", "--body", "本文B")
 	c := s.add("C")
 	ok[any](t, s.quenta("task", "done", a.ID, "--reason", "済んだ"))
 	ok[any](t, s.quenta("task", "cancel", c.ID, "--reason", "要らない"))
-	got := s.list("--all")
-	if !reflect.DeepEqual(idsOf(got), []string{a.ID, b.ID, c.ID}) {
-		t.Errorf("got %v", idsOf(got))
+	want := []summaryJSON{summaryOf(a, "done"), summaryOf(b, "todo"), summaryOf(c, "canceled")}
+	if got := s.list("--all"); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
 	}
-	status := map[string]string{}
-	for _, x := range got {
-		status[x.ID] = x.Status
-	}
-	if status[a.ID] != "done" || status[b.ID] != "todo" || status[c.ID] != "canceled" {
-		t.Errorf("状態: %v", status)
-	}
+}
+
+// summaryOf は、登録したときに返ったタスクから、一覧に出るはずの項目を作る
+func summaryOf(t taskJSON, status string) summaryJSON {
+	return summaryJSON{ID: t.ID, Title: t.Title, Status: status, CreatedAt: t.CreatedAt}
 }
 
 func TestAC06_IDを指定してタスクを見るとタスクの内容とそのタスクのイベントが返る(t *testing.T) {
