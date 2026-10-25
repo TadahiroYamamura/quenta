@@ -46,6 +46,8 @@ verify:
 	dafny verify $(SPEC)
 
 test: $(GEN_STAMP)
+	@unformatted=$$(gofmt -l cmd internal e2e | grep -v '^$(GEN_DIR)/' || true); \
+	if [ -n "$$unformatted" ]; then echo "gofmt で整形されていない: $$unformatted"; exit 1; fi
 	go vet $$(go list ./... | grep -v '/$(GEN_DIR)/')
 	go test ./...
 
