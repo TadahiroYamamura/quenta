@@ -314,11 +314,16 @@ func snapshotRows(t *testing.T, s *Store) []string {
 	return out
 }
 
-func assertRejected(t *testing.T, s *Store, before []string, stmts ...string) {
+// assertRejected は、各文が、エラーの文に by を含む制約（トリガー）で拒まれ、行が変わらないことを確かめる。
+// 拒んだのが期待した制約であることまで見るのは、ほかの制約（外部キーなど）や SQL の書き誤りで拒まれても通ってしまわないため
+func assertRejected(t *testing.T, s *Store, before []string, by string, stmts ...string) {
 	t.Helper()
 	for _, q := range stmts {
-		if _, err := s.db.Exec(q); err == nil {
+		_, err := s.db.Exec(q)
+		if err == nil {
 			t.Errorf("拒まれなかった: %s", q)
+		} else if !strings.Contains(err.Error(), by) {
+			t.Errorf("期待した制約（%s）でなく、別の理由で拒まれた: %s: %v", by, q, err)
 		}
 	}
 	if after := snapshotRows(t, s); !equalStrings(after, before) {
@@ -335,7 +340,7 @@ func Testタスクは削除できない(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0000000c', 'c', '', 'todo', 3)`); err != nil {
 		t.Fatal(err)
 	}
-	assertRejected(t, s, snapshotRows(t, s),
+	assertRejected(t, s, snapshotRows(t, s), "tasks の行は削除できない",
 		`DELETE FROM tasks WHERE id = '0000000c'`,
 		`DELETE FROM tasks WHERE id = '0000000a'`,
 		`DELETE FROM tasks`,
@@ -345,11 +350,14 @@ func Testタスクは削除できない(t *testing.T) {
 func Test上書きで保存しようとすると拒まれる(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "本文", "s", 1)
-	assertRejected(t, s, snapshotRows(t, s),
-		// 削除してから入れ直す形の上書き（登録した順も変わる）
+	before := snapshotRows(t, s)
+	// 削除してから入れ直す形の上書き（登録した順も変わる）は、削除を拒むトリガーが拒む
+	assertRejected(t, s, before, "tasks の行は削除できない",
 		`INSERT OR REPLACE INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)`,
 		`REPLACE INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)`,
-		// 書き換える形の上書き
+	)
+	// 書き換える形の上書きは、状態以外の列の書き換えを拒むトリガーが拒む
+	assertRejected(t, s, before, "tasks の状態以外の列は書き換えられない",
 		`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0000000a', '上書き', '', 'todo', 1)
 		 ON CONFLICT(id) DO UPDATE SET title = excluded.title`,
 	)
@@ -358,7 +366,7 @@ func Test上書きで保存しようとすると拒まれる(t *testing.T) {
 func Testタスクの状態以外の列は書き換えられない(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "本文", "s", 1)
-	assertRejected(t, s, snapshotRows(t, s),
+	assertRejected(t, s, snapshotRows(t, s), "tasks の状態以外の列は書き換えられない",
 		`UPDATE tasks SET id = '0000000z' WHERE id = '0000000a'`,
 		`UPDATE tasks SET title = '別' WHERE id = '0000000a'`,
 		`UPDATE tasks SET body = '別' WHERE id = '0000000a'`,
@@ -381,7 +389,7 @@ func Test終わったタスクは書き換えられない(t *testing.T) {
 	if _, err := finish(s, "0000000b", task.OutcomeCancel, "r", "s", 2); err != nil {
 		t.Fatal(err)
 	}
-	assertRejected(t, s, snapshotRows(t, s),
+	assertRejected(t, s, snapshotRows(t, s), "終わったタスクは書き換えられない",
 		`UPDATE tasks SET status = 'todo' WHERE id = '0000000a'`,
 		`UPDATE tasks SET status = 'canceled' WHERE id = '0000000a'`,
 		`UPDATE tasks SET status = 'todo' WHERE id = '0000000b'`,
@@ -395,11 +403,15 @@ func Testイベントは書き換えも削除もできない(t *testing.T) {
 	if _, err := finish(s, "0000000a", task.OutcomeComplete, "r", "s", 2); err != nil {
 		t.Fatal(err)
 	}
-	assertRejected(t, s, snapshotRows(t, s),
+	before := snapshotRows(t, s)
+	assertRejected(t, s, before, "events の行は書き換えられない",
 		`UPDATE events SET reason = '別' WHERE task_id = '0000000a'`,
 		`UPDATE events SET actor = '別'`,
+	)
+	assertRejected(t, s, before, "events の行は削除できない",
 		`DELETE FROM events WHERE task_id = '0000000a'`,
 		`DELETE FROM events`,
+		// 上書きによる削除も、recursive_triggers を有効にしているので削除を拒むトリガーが拒む
 		`INSERT OR REPLACE INTO events (seq, task_id, actor, to_status, at) VALUES (1, '0000000a', '別', 'todo', 1)`,
 	)
 }
