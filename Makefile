@@ -53,9 +53,10 @@ test: $(GEN_STAMP)
 
 check: verify test
 
-# AI が書いた Go を対象にする。Dafny から変換したコードとそのランタイムは外す
+# AI が書いた Go を対象にする。Dafny から変換したコードとそのランタイムは外す。
+# -i で、壊した箇所のパッケージだけでなく E2E を含む全テストを実行する（CLI の誤りは E2E でも見つけるため）
 mutation: $(GEN_STAMP)
-	go tool gremlins unleash --exclude-files '^$(GEN_DIR)/' ./...
+	go tool gremlins unleash -i --exclude-files '^$(GEN_DIR)/'
 
 clean:
 	rm -rf $(GEN_DIR) bin
