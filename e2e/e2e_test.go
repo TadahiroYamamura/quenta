@@ -461,16 +461,47 @@ func Test主体はQUENTA_SESSIONだけから読みエージェント固有の環
 }
 
 // 受け入れ条件ではなく、CLAUDE.md の実装の制約「git を前提にしない」「対話的な入力をしない」を確かめる。
-// PATH を空にして git を含むほかのコマンドを呼べなくし、標準入力は開いたまま何も書かない
-func Test外部のコマンドを呼ばず標準入力を待たずにすべての操作が終わる(t *testing.T) {
+//   - PATH には、呼ばれたら印のファイルを書くだけの偽の git だけを置く。ほかのコマンドは呼べない
+//   - 作業ディレクトリに偽の .git/ を置き、操作の前後で中身と更新日時が変わらないことを確かめる
+//   - 標準入力は開いたまま何も書かない。入力を待てば時間切れで落ちる
+//
+// .git/ を読んで結果を捨てる実装は、外から観察できないので見分けられない
+func Test操作の間にgitを呼ばず_gitディレクトリを変えず標準入力を待たない(t *testing.T) {
 	s := newSandbox(t)
+	binDir := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "git-was-called")
+	fakeGit := "#!/bin/sh\necho \"$@\" >> " + marker + "\n"
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(fakeGit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join(s.cwd, ".git")
+	for name, content := range map[string]string{
+		"HEAD":                 "ref: refs/heads/main\n",
+		"config":               "[core]\n\trepositoryformatversion = 0\n",
+		"refs/heads/main":      "0123456789abcdef0123456789abcdef01234567\n",
+		"info/exclude":         "",
+		"objects/.placeholder": "",
+	} {
+		path := filepath.Join(gitDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 更新日時の変化を見分けられるよう、過去の日時にそろえる
+	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	filepath.WalkDir(gitDir, func(path string, _ fs.DirEntry, _ error) error { return os.Chtimes(path, past, past) })
+	before := snapshot(t, gitDir)
+
 	run := func(args ...string) result {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = s.cwd
-		cmd.Env = []string{"HOME=" + s.home, "PATH=", "XDG_DATA_HOME=" + s.data, "QUENTA_SESSION=" + s.session}
+		cmd.Env = []string{"HOME=" + s.home, "PATH=" + binDir, "XDG_DATA_HOME=" + s.data, "QUENTA_SESSION=" + s.session}
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -498,4 +529,39 @@ func Test外部のコマンドを呼ばず標準入力を待たずにすべて�
 	ok[any](t, run("task", "done", tk.ID, "--reason", "r"))
 	failsWith(t, run("task", "cancel", tk.ID, "--reason", "r"), "already_finished")
 	failsWith(t, run("task", "add"), "title_required")
+
+	if args, err := os.ReadFile(marker); err == nil {
+		t.Errorf("git を呼んだ: %q", args)
+	}
+	if after := snapshot(t, gitDir); !reflect.DeepEqual(after, before) {
+		t.Errorf(".git/ が変わった:\n前 %v\n後 %v", before, after)
+	}
+}
+
+// snapshot は、ディレクトリの下のすべてのファイルとディレクトリの、中身・権限・更新日時を返す
+func snapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		var content []byte
+		if !d.IsDir() {
+			if content, err = os.ReadFile(path); err != nil {
+				return err
+			}
+		}
+		rel, _ := filepath.Rel(root, path)
+		out[filepath.ToSlash(rel)] = fmt.Sprintf("%v %v %q", info.Mode(), info.ModTime().UnixNano(), content)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
