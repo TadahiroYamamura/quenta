@@ -286,6 +286,16 @@ func Test仕様の関数が作っていない状態の変更や別のタスク�
 	}); task.CodeOf(err) != task.CodeInternal {
 		t.Errorf("InsertTask(別の ID の登録): %v", err)
 	}
+	// 同じ ID でも、完了の変更を登録として保存しない（登録か完了・中止かの確かめだけで弾く）
+	if _, err := s.InsertTask(ctx, a.ID, func(bool) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("InsertTask(同じ ID の完了の変更): %v", err)
+	}
+	// 同じ ID でも、登録の変更を完了・中止として保存しない
+	if _, err := s.UpdateTask(ctx, "0000000c", func(*task.Task) (task.Change, error) {
+		return task.NewTask("0000000c", false, "c", "", "s", 2)
+	}); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("UpdateTask(同じ ID の登録): %v", err)
+	}
 	// b の変更として、a の完了を保存しない
 	if _, err := s.UpdateTask(ctx, b.ID, func(*task.Task) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
 		t.Errorf("UpdateTask(別のタスクの変更): %v", err)
