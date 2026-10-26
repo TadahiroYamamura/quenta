@@ -20,9 +20,9 @@ exec ls -A $HOME
 
 # XDG_DATA_HOME の下には quenta/quenta.db だけがある（SQLite が一時的に作る -wal・-shm は、閉じるときに消える）
 exec ls -A $XDG_DATA_HOME
-cmp stdout quenta_dir.txt
+cmp stdout $WORK/quenta_dir.txt
 exec ls -A $XDG_DATA_HOME/quenta
-cmp stdout db_file.txt
+cmp stdout $WORK/db_file.txt
 
 # XDG_DATA_HOME が未設定なら、HOME の下の .local/share/quenta にだけ作られる
 env XDG_DATA_HOME=
@@ -30,7 +30,7 @@ exec quenta task add --title B
 exec ls -A
 ! stdout .
 exec ls -A $HOME/.local/share/quenta
-cmp stdout db_file.txt
+cmp stdout $WORK/db_file.txt
 
 -- quenta_dir.txt --
 quenta
