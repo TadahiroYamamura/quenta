@@ -57,7 +57,7 @@ guarantees:
 
 check: verify guarantees test mutation
 
-# 保証の対応表で決めた範囲（重要度が高の行と前提の行のうち、テスト・DB の制約・実行時の確認で守る行の code）を対象にする。
+# 保証の対応表で決めた範囲（必要な守り方が①〜③の行と前提の行のうち、テスト・DB の制約・実行時の確認で守る行の code）を対象にする。
 # -i で、壊した箇所のパッケージだけでなく E2E を含む全テストを実行する。生き残りは spec/mutation-exclusions.toml と突き合わせる
 mutation: $(GEN_STAMP)
 	out=$$(mktemp); \

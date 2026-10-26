@@ -35,7 +35,11 @@ const (
 )
 
 var (
-	importances = map[string]int{"低": 1, "中": 2, "高": 3}
+	// 影響の軸の段階（assess-guarantee スキルの「影響の軸」）
+	harms       = []string{"なし", "損害"}
+	datas       = []string{"なし", "不整合", "喪失"}
+	functions   = []string{"なし", "細部", "副次", "主要"}
+	detectables = []string{"気づける", "気づけない"}
 	guardWords  = []string{"証明", "DB の制約", "実行時の確認", "テスト", "人のレビュー", "なし"}
 )
 
@@ -353,12 +357,50 @@ func emptyOrComment(s string) bool {
 // ---------- 保証の表 ----------
 
 type guarantee struct {
-	id, property, fingerprint, importance, review, approved, rationale string
-	ensures                                                            int // 宣言全体なら -1
-	guards, proofs, constraints, premises, code                        []string
+	id, property, fingerprint, harm, data, function, detectable, review, approved, rationale string
+	ensures                                                                                  int // 宣言全体なら -1
+	guards, proofs, constraints, premises, code                                              []string
 }
 
-var knownKeys = []string{"id", "property", "ensures", "fingerprint", "importance", "guards", "proofs", "constraints", "premises", "code", "review", "approved", "rationale"}
+// noRequirement は、どの軸にも影響がない行の強さ。⑤より弱い
+const noRequirement = 6
+
+// strength は、4 つの軸から引いた必要な守り方の強さ（assess-guarantee スキルの「必要な守り方」）。
+// ①〜⑤を 1〜5 で表し、軸ごとの要求のうち最も強いもの（小さいもの）を返す
+func (g guarantee) strength() int {
+	notice := g.detectable == "気づける"
+	pick := func(ifNotice, ifNot int) int {
+		if notice {
+			return ifNotice
+		}
+		return ifNot
+	}
+	s := noRequirement
+	if g.harm == "損害" || g.data == "喪失" {
+		s = 1
+	}
+	if g.data == "不整合" {
+		s = min(s, pick(3, 2))
+	}
+	switch g.function {
+	case "主要":
+		s = min(s, pick(3, 2))
+	case "副次":
+		s = min(s, pick(5, 4))
+	case "細部":
+		s = min(s, 5)
+	}
+	return s
+}
+
+func strengthLabel(s int) string {
+	if s == noRequirement {
+		return "要求なし"
+	}
+	return string(rune('①' + s - 1))
+}
+
+var knownKeys = []string{"id", "property", "ensures", "fingerprint", "harm", "data", "function", "detectable", "guards", "proofs", "constraints", "premises", "code", "review", "approved", "rationale"}
 
 func readGuarantees() ([]guarantee, error) {
 	tables, err := readTables(tablePath, "guarantee")
@@ -374,7 +416,7 @@ func readGuarantees() ([]guarantee, error) {
 		}
 		g := guarantee{
 			id: t["id"].str, property: t["property"].str, fingerprint: t["fingerprint"].str,
-			importance: t["importance"].str, review: t["review"].str, approved: t["approved"].str,
+			harm: t["harm"].str, data: t["data"].str, function: t["function"].str, detectable: t["detectable"].str, review: t["review"].str, approved: t["approved"].str,
 			rationale: t["rationale"].str, ensures: -1,
 			guards: t["guards"].list, proofs: t["proofs"].list, constraints: t["constraints"].list,
 			premises: t["premises"].list, code: t["code"].list,
@@ -482,6 +524,7 @@ func runCheck() error {
 	}
 	bad := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 
+	premise := premiseIDs(gs)
 	byID := map[string]guarantee{}
 	covered := map[string]bool{} // "名前#ensures の番号" または "名前#*"
 	for _, g := range gs {
@@ -513,8 +556,18 @@ func runCheck() error {
 		if g.fingerprint != want {
 			bad("%s: 指紋が今の仕様と合わない（表 %s、仕様 %s）。本文が変わったなら、守り方が今も正しいかを見直してから直す", g.id, g.fingerprint, want)
 		}
-		if _, ok := importances[g.importance]; !ok {
-			bad("%s: 重要度 %q は 高・中・低 のどれでもない", g.id, g.importance)
+		for _, a := range []struct {
+			name, value string
+			words       []string
+		}{
+			{"人やお金への影響（harm）", g.harm, harms},
+			{"データへの影響（data）", g.data, datas},
+			{"機能への影響（function）", g.function, functions},
+			{"気づけるか（detectable）", g.detectable, detectables},
+		} {
+			if !slices.Contains(a.words, a.value) {
+				bad("%s: %s %q は %s のどれでもない", g.id, a.name, a.value, strings.Join(a.words, "・"))
+			}
 		}
 		if len(g.guards) == 0 {
 			bad("%s: guards がない", g.id)
@@ -550,24 +603,35 @@ func runCheck() error {
 		if g.rationale == "" {
 			bad("%s: rationale がない", g.id)
 		}
-		// 重要度に必要な守り方（CLAUDE.md の重要度の表）
+		// 必要な守り方（assess-guarantee スキルの表）。強い守り方は、それより弱い要求も満たす
 		strong := has("証明") || has("DB の制約")
-		switch g.importance {
-		case "高":
-			if has("なし") {
-				bad("%s: 重要度 高に「なし」は認めない", g.id)
-			} else if !strong && g.approved == "" {
-				bad("%s: 重要度 高を証明でも DB の制約でもなく守るなら、approved（人が了承した日付）が要る", g.id)
-			}
-		case "中":
-			if has("なし") {
-				bad("%s: 重要度 中に「なし」は認めない", g.id)
-			} else if !(strong || has("実行時の確認") || has("テスト")) {
-				bad("%s: 重要度 中は、証明・DB の制約・実行時の確認・テストのどれかで守る", g.id)
-			}
-		case "低":
-			if has("なし") && g.approved == "" {
+		switch st := g.strength(); {
+		case has("なし"):
+			if st <= 4 {
+				bad("%s: 必要な守り方が%sの行に「なし」は認めない", g.id, strengthLabel(st))
+			} else if g.approved == "" {
 				bad("%s: 「なし」には approved（人が了承した日付）が要る", g.id)
+			}
+		case st == 1 && !premise[g.id]:
+			if !strong {
+				bad("%s: 必要な守り方が①の行は、証明か DB の制約で守る", g.id)
+			}
+		// 前提は証明できない部分を切り出したものなので、①が要っても②と同じ守り方で認める
+		case st <= 2:
+			if !strong && (g.approved == "" || !has("テスト")) {
+				bad("%s: 必要な守り方が②の行を、証明でも DB の制約でもなく守るなら、テストと approved（人が了承した日付）が要る", g.id)
+			}
+		case st == 3:
+			if !(strong || has("テスト")) {
+				bad("%s: 必要な守り方が③の行は、証明・DB の制約・テストのどれかで守る", g.id)
+			}
+		case st == 4:
+			if !(strong || has("テスト") || has("実行時の確認")) {
+				bad("%s: 必要な守り方が④の行は、証明・DB の制約・テスト・実行時の確認のどれかで守る", g.id)
+			}
+		case st == 5:
+			if !(strong || has("テスト") || has("実行時の確認") || has("人のレビュー")) {
+				bad("%s: 必要な守り方が⑤の行は、証明・DB の制約・テスト・実行時の確認・人のレビューのどれかで守る", g.id)
 			}
 		}
 	}
@@ -583,8 +647,8 @@ func runCheck() error {
 				bad("%s: 前提 %s が表にない", g.id, p)
 				continue
 			}
-			if importances[pg.importance] < importances[g.importance] {
-				bad("%s: 前提 %s の重要度（%s）が、この行の重要度（%s）より低い", g.id, p, pg.importance, g.importance)
+			if pg.strength() > g.strength() {
+				bad("%s: 前提 %s の必要な守り方（%s）が、この行（%s）より弱い", g.id, p, strengthLabel(pg.strength()), strengthLabel(g.strength()))
 			}
 		}
 	}
@@ -622,8 +686,8 @@ func runCheck() error {
 
 func printMarkdown(gs []guarantee, decls map[string]*decl, markers map[string][]string) {
 	esc := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "|", `\|`), "\n", " ") }
-	fmt.Println("| id | 性質 | 意味 | 重要度 | 守るもの | 証明 | 制約 | 前提 | テスト | 了承 | 根拠 |")
-	fmt.Println("|---|---|---|---|---|---|---|---|---|---|---|")
+	fmt.Println("| id | 性質 | 意味 | 人やお金 | データ | 機能 | 気づけるか | 強さ | 守るもの | 証明 | 制約 | 前提 | テスト | 了承 | 根拠 |")
+	fmt.Println("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, g := range gs {
 		prop := g.property
 		meaning := ""
@@ -635,8 +699,8 @@ func printMarkdown(gs []guarantee, decls map[string]*decl, markers map[string][]
 		}
 		tests := slices.Clone(markers[g.id])
 		sort.Strings(tests)
-		fmt.Printf("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			g.id, prop, esc(meaning), g.importance, strings.Join(g.guards, "、"), strings.Join(g.proofs, "、"),
+		fmt.Printf("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			g.id, prop, esc(meaning), g.harm, g.data, g.function, g.detectable, strengthLabel(g.strength()), strings.Join(g.guards, "、"), strings.Join(g.proofs, "、"),
 			strings.Join(g.constraints, "、"), strings.Join(g.premises, "、"), strings.Join(tests, "、"), g.approved, esc(g.rationale))
 	}
 }
@@ -661,24 +725,30 @@ func runFingerprint() error {
 	return nil
 }
 
-// ---------- 変異テスト ----------
-
-// mutationTargets は、変異テストの対象にする Go のコードのディレクトリ。
-// 重要度が高の行と前提の行のうち、テスト・DB の制約・実行時の確認で守る行の code
-func mutationTargets() ([]string, error) {
-	gs, err := readGuarantees()
-	if err != nil {
-		return nil, err
-	}
+// premiseIDs は、ほかの行の前提として指されている行の id
+func premiseIDs(gs []guarantee) map[string]bool {
 	premise := map[string]bool{}
 	for _, g := range gs {
 		for _, p := range g.premises {
 			premise[p] = true
 		}
 	}
+	return premise
+}
+
+// ---------- 変異テスト ----------
+
+// mutationTargets は、変異テストの対象にする Go のコードのディレクトリ。
+// 必要な守り方が①〜③の行と前提の行のうち、テスト・DB の制約・実行時の確認で守る行の code
+func mutationTargets() ([]string, error) {
+	gs, err := readGuarantees()
+	if err != nil {
+		return nil, err
+	}
+	premise := premiseIDs(gs)
 	set := map[string]bool{}
 	for _, g := range gs {
-		if g.importance != "高" && !premise[g.id] {
+		if g.strength() > 3 && !premise[g.id] {
 			continue
 		}
 		if !(slices.Contains(g.guards, "テスト") || slices.Contains(g.guards, "DB の制約") || slices.Contains(g.guards, "実行時の確認")) {
