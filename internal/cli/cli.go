@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -25,6 +26,14 @@ type env struct {
 
 // Run は、quenta を args で実行し、終了コードを返す。成功の JSON は stdout に、エラーの JSON は stderr に書く
 func Run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer, appOpts ...app.Option) int {
+	// 不正な UTF-8 は、仕様に渡すと U+FFFD に置き換わり、入力と違う値が保存される。
+	// タイトルなどを後から直す操作がないので、置き換えずに入り口で拒む（#1 の 2 回目のレビューで人が決めた）
+	for i, a := range args {
+		if !utf8.ValidString(a) {
+			writeError(stderr, task.Errorf(task.CodeInvalidArgument, "引数の %d 番目が UTF-8 として正しくない", i+1))
+			return 1
+		}
+	}
 	e := &env{getenv: getenv, stdout: stdout, appOpts: appOpts}
 	root := newRoot(e)
 	root.SetArgs(args)
@@ -71,7 +80,11 @@ func newAdd(e *env) *cobra.Command {
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return e.withApp(func(a *app.App) error {
-				t, err := a.Add(cmd.Context(), title, body, e.getenv("QUENTA_SESSION"))
+				actor, err := e.session()
+				if err != nil {
+					return err
+				}
+				t, err := a.Add(cmd.Context(), title, body, actor)
 				if err != nil {
 					return err
 				}
@@ -144,7 +157,11 @@ func newFinish(e *env, name string, o task.Outcome) *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return e.withApp(func(a *app.App) error {
-				t, err := a.Finish(cmd.Context(), args[0], o, reason, e.getenv("QUENTA_SESSION"))
+				actor, err := e.session()
+				if err != nil {
+					return err
+				}
+				t, err := a.Finish(cmd.Context(), args[0], o, reason, actor)
 				if err != nil {
 					return err
 				}
@@ -170,6 +187,15 @@ func exactArgs(n int) cobra.PositionalArgs {
 		}
 		return nil
 	}
+}
+
+// session は、主体（環境変数 QUENTA_SESSION）を返す。不正な UTF-8 なら、引数と同じ理由で拒む
+func (e *env) session() (string, error) {
+	s := e.getenv("QUENTA_SESSION")
+	if !utf8.ValidString(s) {
+		return "", task.Errorf(task.CodeInvalidArgument, "環境変数 QUENTA_SESSION が UTF-8 として正しくない")
+	}
+	return s, nil
 }
 
 func (e *env) withApp(fn func(*app.App) error) error {
