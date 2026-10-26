@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -40,8 +41,9 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("データのディレクトリを作れない: %w", err)
 	}
 	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", "busy_timeout(5000)")
+	// ほかのセッションの書き込みが終わるのを待つ時間
+	busyTimeout := 5 * time.Second
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()))
 	q.Add("_pragma", "foreign_keys(1)")
 	// 上書き（INSERT OR REPLACE）による削除でも、削除を拒むトリガーを起動させる
 	q.Add("_pragma", "recursive_triggers(1)")
@@ -50,6 +52,10 @@ func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
 	if err != nil {
 		return nil, err
+	}
+	if err := useWAL(context.Background(), db, busyTimeout); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("データベースを WAL モードにできない: %w", err)
 	}
 	ms, err := loadMigrations(schemadb.Migrations, "migrations")
 	if err != nil {
@@ -64,6 +70,27 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// useWAL は、データベースを WAL モードにする。WAL モードはファイルに残るので、接続ごとではなく開くときに 1 回だけ行う。
+// SQLite は WAL への切り替えでは busy_timeout を待たずに SQLITE_BUSY を返すことがある（新しいデータベースを複数のセッションが同時に開くと取り合う）ので、
+// timeout のあいだ、少し待ってやり直す
+func useWAL(ctx context.Context, db *sql.DB, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var mode string
+		err := db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&mode)
+		if err == nil {
+			if mode != "wal" {
+				return fmt.Errorf("journal_mode が %q になった", mode)
+			}
+			return nil
+		}
+		if !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // InsertTask は、id のタスクが既にあるかを調べて build に渡し、build が返した登録の状態の変更を保存する。
 // build がエラーを返せば何も保存しない。調べた後に別の書き手が同じ ID を保存していれば、一意の制約が拒み id_conflict を返す
@@ -282,6 +309,13 @@ func scanTask(r scanner) (task.Task, error) {
 	}
 	t.Status = s
 	return t, nil
+}
+
+func isBusy(err error) bool {
+	if e, ok := errors.AsType[*sqlite.Error](err); ok {
+		return e.Code()&0xff == sqlite3.SQLITE_BUSY
+	}
+	return false
 }
 
 func isUniqueViolation(err error) bool {
