@@ -23,24 +23,40 @@ func openTemp(t *testing.T) (*Store, string) {
 	return s, path
 }
 
-// add は、仕様の NewTask で作った登録の状態の変更を保存する
+// insert は、仕様の NewTask で作った登録の状態の変更を保存する
+func insert(s *Store, id, title, body, actor string, now int64) (task.Task, error) {
+	return s.InsertTask(context.Background(), id, func(idTaken bool) (task.Change, error) {
+		return task.NewTask(id, idTaken, title, body, actor, now)
+	})
+}
+
 func add(t *testing.T, s *Store, id, title, body, actor string, now int64) task.Task {
 	t.Helper()
-	c, err := task.NewTask(id, title, body, actor, now)
+	tk, err := insert(s, id, title, body, actor, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertTask(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
-	return c.Task()
+	return tk
 }
 
 // finish は、仕様の Finish で id のタスクを完了・中止にする
 func finish(s *Store, id string, o task.Outcome, reason, actor string, now int64) (task.Task, error) {
-	return s.UpdateTask(context.Background(), id, func(cur task.Task) (task.Change, error) {
-		return task.Finish(cur, o, reason, actor, now)
+	return s.UpdateTask(context.Background(), id, func(found *task.Task) (task.Change, error) {
+		return task.Finish(found, o, reason, actor, now)
 	})
+}
+
+// find は、id のタスクを読む。なければテストを失敗させる
+func find(t *testing.T, s *Store, id string) task.Task {
+	t.Helper()
+	got, err := s.FindTask(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatalf("タスク %s がない", id)
+	}
+	return *got
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -103,9 +119,8 @@ func Test保存したタスクとイベントは読み出しても値が変わ�
 		if got[i] != want[i] {
 			t.Errorf("task %d: got %+v, want %+v", i, got[i], want[i])
 		}
-		one, err := s.GetTask(ctx, want[i].ID)
-		if err != nil || one != want[i] {
-			t.Errorf("GetTask %d: got %+v, %v", i, one, err)
+		if one := find(t, s, want[i].ID); one != want[i] {
+			t.Errorf("FindTask %d: got %+v", i, one)
 		}
 	}
 	gotEvents, err := s.AllEvents(ctx)
@@ -129,15 +144,42 @@ func Test保存したタスクとイベントは読み出しても値が変わ�
 	}
 }
 
-func Test既にあるIDで保存しようとするとid_conflictを返し既存のタスクもイベントも変わらない(t *testing.T) {
+// 守る: id-taken-observed, new-task-id-conflict
+func Test登録はIDのタスクがあるかを調べて渡しあればid_conflictを返し何も変えない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	orig := add(t, s, "0a1b2c3d", "元", "元の本文", "s1", 1)
-	dup, err := task.NewTask("0a1b2c3d", "後", "後の本文", "s2", 2)
-	if err != nil {
-		t.Fatal(err)
+	var observed []bool
+	observe := func(id string) error {
+		_, err := s.InsertTask(ctx, id, func(idTaken bool) (task.Change, error) {
+			observed = append(observed, idTaken)
+			return task.NewTask(id, idTaken, "後", "", "s2", 2)
+		})
+		return err
 	}
-	err = s.InsertTask(ctx, dup)
+	if err := observe("0a1b2c3d"); task.CodeOf(err) != task.CodeIDConflict {
+		t.Errorf("既にある ID: got %v, want id_conflict", err)
+	}
+	if err := observe("0a1b2c3e"); err != nil {
+		t.Errorf("まだない ID: %v", err)
+	}
+	if len(observed) != 2 || !observed[0] || observed[1] {
+		t.Errorf("渡した事実が DB と違う: %v（want [true false]）", observed)
+	}
+	if got := find(t, s, "0a1b2c3d"); got != orig {
+		t.Errorf("既存のタスクが変わった: %+v", got)
+	}
+}
+
+// 守る: unique-ids, id-taken-observed, new-task-id-conflict, list-no-duplicates
+func Test調べた事実が誤っていても既にあるIDでの保存は一意の制約が拒みid_conflictを返し何も変えない(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	orig := add(t, s, "0a1b2c3d", "元", "元の本文", "s1", 1)
+	// 調べてから書くまでのあいだに、別の書き手が同じ ID を保存した場面を、調べた事実を無視して作る
+	_, err := s.InsertTask(ctx, "0a1b2c3d", func(bool) (task.Change, error) {
+		return task.NewTask("0a1b2c3d", false, "後", "後の本文", "s2", 2)
+	})
 	if got := task.CodeOf(err); got != task.CodeIDConflict {
 		t.Fatalf("got %s (%v), want id_conflict", got, err)
 	}
@@ -151,21 +193,27 @@ func Test既にあるIDで保存しようとするとid_conflictを返し既存�
 	}
 }
 
-func Test変更がエラーを返すとタスクもイベントも保存しない(t *testing.T) {
+// 守る: applied-like-model
+func Test仕様の関数がエラーを返すとタスクもイベントも保存しない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	orig := add(t, s, "0a1b2c3d", "t", "", "s1", 1)
+	before := snapshotRows(t, s)
 	boom := task.Errorf(task.CodeAlreadyFinished, "x")
-	_, err := s.UpdateTask(ctx, orig.ID, func(cur task.Task) (task.Change, error) {
+	_, err := s.UpdateTask(ctx, orig.ID, func(*task.Task) (task.Change, error) {
 		return task.Change{}, boom
 	})
 	if !errors.Is(err, boom) {
-		t.Fatalf("got %v", err)
+		t.Fatalf("UpdateTask: got %v", err)
 	}
-	got, _ := s.GetTask(ctx, orig.ID)
-	evs, _ := s.AllEvents(ctx)
-	if got != orig || len(evs) != 1 {
-		t.Errorf("変わった: %+v %+v", got, evs)
+	_, err = s.InsertTask(ctx, "0a1b2c3e", func(bool) (task.Change, error) {
+		return task.Change{}, boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("InsertTask: got %v", err)
+	}
+	if after := snapshotRows(t, s); !equalStrings(after, before) {
+		t.Errorf("行が変わった:\n前 %v\n後 %v", before, after)
 	}
 }
 
@@ -178,6 +226,7 @@ func failEventsBy(t *testing.T, s *Store, actor string) {
 	}
 }
 
+// 守る: applied-like-model
 func Testイベントを保存できなければタスクの変更も残らない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
@@ -186,22 +235,19 @@ func Testイベントを保存できなければタスクの変更も残らな�
 	if _, err := finish(s, orig.ID, task.OutcomeComplete, "r", "boom", 2); err == nil {
 		t.Fatal("エラーにならなかった")
 	}
-	got, _ := s.GetTask(ctx, orig.ID)
+	got := find(t, s, orig.ID)
 	evs, _ := s.AllEvents(ctx)
 	if got != orig || len(evs) != 1 {
 		t.Errorf("変わった: %+v %+v", got, evs)
 	}
 }
 
+// 守る: applied-like-model
 func Test登録のイベントを保存できなければタスクも残らない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	failEventsBy(t, s, "boom")
-	c, err := task.NewTask("0a1b2c3d", "t", "", "boom", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.InsertTask(ctx, c); err == nil {
+	if _, err := insert(s, "0a1b2c3d", "t", "", "boom", 1); err == nil {
 		t.Fatal("エラーにならなかった")
 	}
 	all, _ := s.AllTasks(ctx)
@@ -210,6 +256,7 @@ func Test登録のイベントを保存できなければタスクも残らな�
 	}
 }
 
+// 守る: applied-like-model
 func Test存在しないタスクを指すイベントは外部キーの制約で保存できない(t *testing.T) {
 	s, _ := openTemp(t)
 	_, err := s.db.Exec(`INSERT INTO events (task_id, actor, to_status, at) VALUES ('ffffffff', 's', 'todo', 1)`)
@@ -218,6 +265,7 @@ func Test存在しないタスクを指すイベントは外部キーの制約�
 	}
 }
 
+// 守る: applied-like-model
 func Test仕様の関数が作っていない状態の変更や別のタスクの変更は保存しない(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
@@ -225,15 +273,21 @@ func Test仕様の関数が作っていない状態の変更や別のタスク�
 	b := add(t, s, "0000000b", "b", "", "s", 1)
 
 	// 登録でない状態の変更を、登録として保存しない
-	other, err := task.Finish(a, task.OutcomeComplete, "r", "s", 2)
+	other, err := task.Finish(&a, task.OutcomeComplete, "r", "s", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertTask(ctx, other); task.CodeOf(err) != task.CodeInternal {
+	if _, err := s.InsertTask(ctx, "0000000c", func(bool) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
 		t.Errorf("InsertTask(完了の変更): %v", err)
 	}
+	// 0000000c の登録として、別の ID のタスクの登録を保存しない
+	if _, err := s.InsertTask(ctx, "0000000c", func(idTaken bool) (task.Change, error) {
+		return task.NewTask("0000000d", idTaken, "d", "", "s", 2)
+	}); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("InsertTask(別の ID の登録): %v", err)
+	}
 	// b の変更として、a の完了を保存しない
-	if _, err := s.UpdateTask(ctx, b.ID, func(task.Task) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
+	if _, err := s.UpdateTask(ctx, b.ID, func(*task.Task) (task.Change, error) { return other, nil }); task.CodeOf(err) != task.CodeInternal {
 		t.Errorf("UpdateTask(別のタスクの変更): %v", err)
 	}
 	// 外で作った値（ゼロ値）は、SQL を実行する前に、仕様の関数が作った値でないことを理由に拒む
@@ -250,22 +304,62 @@ func Test仕様の関数が作っていない状態の変更や別のタスク�
 	}
 }
 
-func Test存在しないIDを読むとnot_foundを返す(t *testing.T) {
+// 守る: found-observed
+func Testタスクを探した結果を渡し存在しないIDならnilを渡す(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
-	if _, err := s.GetTask(ctx, "ffffffff"); task.CodeOf(err) != task.CodeNotFound {
-		t.Errorf("GetTask: %v", err)
+	a := add(t, s, "0000000a", "a", "", "s", 1)
+	if got, err := s.FindTask(ctx, "ffffffff"); got != nil || err != nil {
+		t.Errorf("FindTask(ない ID): %+v, %v", got, err)
 	}
-	called := false
-	_, err := s.UpdateTask(ctx, "ffffffff", func(cur task.Task) (task.Change, error) {
-		called = true
-		return task.Change{}, nil
-	})
-	if task.CodeOf(err) != task.CodeNotFound || called {
-		t.Errorf("UpdateTask: %v, called=%v", err, called)
+	for _, c := range []struct {
+		id   string
+		want *task.Task
+	}{{"ffffffff", nil}, {a.ID, &a}} {
+		var passed *task.Task
+		called := false
+		_, err := s.UpdateTask(ctx, c.id, func(found *task.Task) (task.Change, error) {
+			called, passed = true, found
+			return task.Finish(found, task.OutcomeComplete, "", "s", 2)
+		})
+		if task.CodeOf(err) != task.CodeReasonRequired || !called {
+			t.Errorf("UpdateTask(%s): %v, called=%v", c.id, err, called)
+		}
+		if (passed == nil) != (c.want == nil) || (passed != nil && *passed != *c.want) {
+			t.Errorf("UpdateTask(%s) が渡した結果: %+v, want %+v", c.id, passed, c.want)
+		}
 	}
 }
 
+// 守る: found-observed
+func Test探す処理が別のタスクを返すとinternalを返し何も変えない(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTemp(t)
+	add(t, s, "0000000a", "a", "", "s", 1)
+	add(t, s, "0000000b", "b", "", "s", 2)
+	before := snapshotRows(t, s)
+	// 探し違えて、指定と違う ID の行を返す問い合わせに差し替える
+	orig := findTaskQuery
+	findTaskQuery = `SELECT id, title, body, status, created_at FROM tasks WHERE id <> ? ORDER BY seq LIMIT 1`
+	t.Cleanup(func() { findTaskQuery = orig })
+
+	if _, err := s.FindTask(ctx, "0000000b"); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("FindTask: %v", err)
+	}
+	called := false
+	_, err := s.UpdateTask(ctx, "0000000b", func(found *task.Task) (task.Change, error) {
+		called = true
+		return task.Finish(found, task.OutcomeComplete, "r", "s", 3)
+	})
+	if task.CodeOf(err) != task.CodeInternal || called {
+		t.Errorf("UpdateTask: %v, called=%v", err, called)
+	}
+	if after := snapshotRows(t, s); !equalStrings(after, before) {
+		t.Errorf("行が変わった:\n前 %v\n後 %v", before, after)
+	}
+}
+
+// 守る: list-order-by-created, list-order-ties
 func Test一覧は作成日時の古い順で作成日時が同じなら登録した順に返す(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
@@ -288,7 +382,7 @@ func Test一覧は作成日時の古い順で作成日時が同じなら登録�
 	}
 }
 
-// ---------- DB の制約（spec/task.dfy の保証の対応表で「DB の制約」としたもの） ----------
+// ---------- DB の制約（spec/guarantees.toml で「DB の制約」としたもの） ----------
 
 // snapshotRows は、tasks と events の全行を、登録した順・記録した順の番号も含めて返す
 func snapshotRows(t *testing.T, s *Store) []string {
@@ -331,6 +425,7 @@ func assertRejected(t *testing.T, s *Store, before []string, by string, stmts ..
 	}
 }
 
+// 守る: tasks-never-disappear-add, tasks-never-disappear-finish, applied-like-model
 func Testタスクは削除できない(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "", "s", 1)
@@ -347,6 +442,7 @@ func Testタスクは削除できない(t *testing.T) {
 	)
 }
 
+// 守る: tasks-never-disappear-add, add-result, applied-like-model
 func Test上書きで保存しようとすると拒まれる(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "本文", "s", 1)
@@ -363,6 +459,7 @@ func Test上書きで保存しようとすると拒まれる(t *testing.T) {
 	)
 }
 
+// 守る: tasks-never-disappear-finish, finish-task-result, applied-like-model
 func Testタスクの状態以外の列は書き換えられない(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "本文", "s", 1)
@@ -379,6 +476,7 @@ func Testタスクの状態以外の列は書き換えられない(t *testing.T)
 	}
 }
 
+// 守る: finish-already-finished, finish-rejects-finished, finished-unchanged-by-add, finished-unchanged-by-finish, applied-like-model
 func Test終わったタスクは書き換えられない(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "", "s", 1)
@@ -397,6 +495,7 @@ func Test終わったタスクは書き換えられない(t *testing.T) {
 	)
 }
 
+// 守る: events-append-only-add, events-append-only-finish, applied-like-model
 func Testイベントは書き換えも削除もできない(t *testing.T) {
 	s, _ := openTemp(t)
 	add(t, s, "0000000a", "a", "", "s", 1)
@@ -438,13 +537,23 @@ func Test閉じて開き直しても保存したタスクとイベントが残�
 		t.Fatal(err)
 	}
 	defer s2.Close()
-	got, err := s2.GetTask(ctx, tk.ID)
-	if err != nil || got != tk {
-		t.Errorf("got %+v, %v", got, err)
+	if got := find(t, s2, tk.ID); got != tk {
+		t.Errorf("got %+v", got)
 	}
 	evs, _ := s2.EventsOf(ctx, tk.ID)
 	if len(evs) != 1 {
 		t.Errorf("events: %+v", evs)
+	}
+}
+
+func Testデータベースはほかのセッションの書き込みを5秒まで待つ設定で開く(t *testing.T) {
+	s, _ := openTemp(t)
+	var ms int
+	if err := s.db.QueryRow(`PRAGMA busy_timeout`).Scan(&ms); err != nil {
+		t.Fatal(err)
+	}
+	if ms != 5000 {
+		t.Errorf("busy_timeout = %d", ms)
 	}
 }
 
@@ -465,8 +574,8 @@ func Test未知の状態が保存されていると読み出しはエラーを�
 	if _, err := s.db.Exec(`INSERT INTO tasks (id, title, body, status, created_at) VALUES ('0a1b2c3d', 't', '', 'doing', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetTask(ctx, "0a1b2c3d"); err == nil {
-		t.Error("GetTask がエラーにならなかった")
+	if _, err := s.FindTask(ctx, "0a1b2c3d"); err == nil {
+		t.Error("FindTask がエラーにならなかった")
 	}
 	if _, err := s.ListTasks(ctx); err == nil {
 		t.Error("ListTasks がエラーにならなかった")
