@@ -258,6 +258,42 @@ func Test誤った入力にはエラーコードを標準エラー出力にJSON�
 	}
 }
 
+func Test不正なUTF8の引数や主体はinvalid_argumentで拒み何も保存しない(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		session string
+	}{
+		{"タイトル", []string{"task", "add", "--title", "\xffタイトル"}, "s1"},
+		{"本文", []string{"task", "add", "--title", "t", "--body", "本文\x80"}, "s1"},
+		{"文字の途中で切れたタイトル", []string{"task", "add", "--title", "\xe3\x81"}, "s1"},
+		{"理由", []string{"task", "done", "0a1b2c3d", "--reason", "\xff"}, "s1"},
+		{"ID", []string{"task", "cancel", "0a1b2c3d\xff", "--reason", "r"}, "s1"},
+		{"詳細の ID", []string{"task", "show", "\xff"}, "s1"},
+		{"登録の主体", []string{"task", "add", "--title", "t"}, "s\xff"},
+		{"完了の主体", []string{"task", "done", "0a1b2c3d", "--reason", "r"}, "s\xff"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.ids = []string{"0a1b2c3d", "0a1b2c3e"}
+			assertOK(t, h.run("task", "add", "--title", "既存"))
+			before := h.run("task", "show", "0a1b2c3d").stdout
+			h.env["QUENTA_SESSION"] = c.session
+			assertError(t, h.run(c.args...), "invalid_argument")
+			h.env["QUENTA_SESSION"] = "s1"
+			if after := h.run("task", "show", "0a1b2c3d").stdout; after != before {
+				t.Errorf("既存のタスクが変わった:\n前 %s後 %s", before, after)
+			}
+			var list struct{ Tasks []json.RawMessage }
+			json.Unmarshal([]byte(h.run("task", "list", "--all").stdout), &list)
+			if len(list.Tasks) != 1 {
+				t.Errorf("タスクが %d 件", len(list.Tasks))
+			}
+		})
+	}
+}
+
 func Test終わったタスクを変えようとするとalready_finishedを返す(t *testing.T) {
 	h := newHarness(t)
 	h.ids = []string{"0a1b2c3d"}
