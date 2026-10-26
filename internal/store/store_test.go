@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -260,8 +261,8 @@ func Test登録のイベントを保存できなければタスクも残らな�
 func Test存在しないタスクを指すイベントは外部キーの制約で保存できない(t *testing.T) {
 	s, _ := openTemp(t)
 	_, err := s.db.Exec(`INSERT INTO events (task_id, actor, to_status, at) VALUES ('ffffffff', 's', 'todo', 1)`)
-	if err == nil {
-		t.Error("保存できてしまった")
+	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
+		t.Errorf("外部キーの制約で拒まれなかった: %v", err)
 	}
 }
 
@@ -503,6 +504,39 @@ func Test終わったタスクは書き換えられない(t *testing.T) {
 		`UPDATE tasks SET status = 'todo' WHERE id = '0000000b'`,
 		`UPDATE tasks SET status = 'done' WHERE id = '0000000b'`,
 	)
+}
+
+// 守る: finish-rejects-finished, finished-unchanged-by-add, finished-unchanged-by-finish
+func Test仕様が終わったとみなす状態とトリガーが書き換えを拒む状態が一致する(t *testing.T) {
+	statuses, err := task.SpecStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) == 0 {
+		t.Fatal("仕様の状態が 1 つもない")
+	}
+	for i, st := range statuses {
+		finished, err := task.IsFinished(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Run(string(st), func(t *testing.T) {
+			s, _ := openTemp(t)
+			id := fmt.Sprintf("%08x", i)
+			if _, err := s.db.Exec(`INSERT INTO tasks (id, title, body, status, created_at) VALUES (?, 't', '', ?, 1)`, id, string(st)); err != nil {
+				t.Fatal(err)
+			}
+			// 状態を同じ値で書く UPDATE でも、終わったタスクならトリガーが拒む
+			_, err := s.db.Exec(`UPDATE tasks SET status = status WHERE id = ?`, id)
+			rejected := err != nil && strings.Contains(err.Error(), "終わったタスクは書き換えられない")
+			if err != nil && !rejected {
+				t.Fatalf("期待した制約でなく、別の理由で拒まれた: %v", err)
+			}
+			if rejected != finished {
+				t.Errorf("仕様の IsFinished=%v、トリガーが拒んだ=%v", finished, rejected)
+			}
+		})
+	}
 }
 
 // 守る: events-append-only-add, events-append-only-finish, applied-like-model
