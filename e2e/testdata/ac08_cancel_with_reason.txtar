@@ -14,7 +14,7 @@ exec quenta task show $ID
 setjson CANCEL_AT events.1.at
 # 中止のイベントの日時は、UTC のミリ秒までの形で、登録の日時とは違う（中止は別のコマンドで後から行った）
 stdout '"at":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"}]}$'
-! stdout '"at":"$AT"}]}$'
+! stdout '"at":"'$AT'"}]}$'
 cmpenv stdout show.json
 
 -- task.json --
