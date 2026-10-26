@@ -58,9 +58,6 @@ func Open(path string) (*Store, error) {
 	}
 	if err := migrate(context.Background(), db, ms); err != nil {
 		db.Close()
-		if task.CodeOf(err) == task.CodeUnsupportedDBVersion {
-			return nil, err
-		}
 		return nil, fmt.Errorf("データベースを用意できない: %w", err)
 	}
 	return &Store{db: db}, nil

@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
-	"sort"
 	"strconv"
 
 	"github.com/TadahiroYamamura/quenta/internal/task"
@@ -46,10 +45,10 @@ func loadMigrations(fsys fs.FS, dir string) ([]migration, error) {
 		}
 		ms = append(ms, migration{version: v, name: e.Name(), sql: string(b)})
 	}
-	sort.Slice(ms, func(i, j int) bool { return ms[i].version < ms[j].version })
+	// fs.ReadDir は名前の順に返し、番号は 4 桁なので、名前の順が番号の順になる
 	for i, m := range ms {
 		if m.version != i+1 {
-			return nil, fmt.Errorf("移行の番号が 1 から欠けなく続いていない: %d 番目が %s", i+1, m.name)
+			return nil, fmt.Errorf("移行の番号が 1 から欠けなく続いていない: %s", m.name)
 		}
 	}
 	if len(ms) == 0 {
@@ -61,17 +60,13 @@ func loadMigrations(fsys fs.FS, dir string) ([]migration, error) {
 // migrate は、データベースに、まだ当たっていない移行を当てる。
 // 新しい版が作ったデータベース（知らない移行まで当たっている）なら unsupported_db_version
 func migrate(ctx context.Context, db *sql.DB, ms []migration) error {
-	latest := len(ms)
 	// 当て終わっていれば、書き込みのトランザクションを始めない（開くたびにほかのセッションの書き込みを待たせないため）
 	v, err := userVersion(ctx, db)
 	if err != nil {
 		return err
 	}
-	if v == latest {
+	if v == len(ms) {
 		return nil
-	}
-	if v > latest {
-		return unsupportedVersion(v, latest)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
