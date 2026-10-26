@@ -779,19 +779,20 @@ func runMutationCheck(resultPath string) error {
 		lines := strings.Split(string(src), "\n")
 		for _, m := range f.Mutations {
 			total++
-			if m.Status != "LIVED" && m.Status != "NOT COVERED" {
-				continue
-			}
 			code := ""
 			if m.Line-1 < len(lines) {
 				code = strings.TrimSpace(lines[m.Line-1])
 			}
+			// 除外が使われたかは、変異の状態によらずに数える。除外した変異は、まれに時間切れなどで生き残り以外の状態になるため（#22）
 			excluded := false
 			for i, e := range exclusions {
 				if e["file"].str == f.FileName && e["type"].str == m.Type && e["code"].str == code {
 					used[i] = true
 					excluded = true
 				}
+			}
+			if m.Status != "LIVED" && m.Status != "NOT COVERED" {
+				continue
 			}
 			if !excluded {
 				survivors = append(survivors, fmt.Sprintf("%s:%d:%d %s %s: %s", f.FileName, m.Line, m.Column, m.Status, m.Type, code))
