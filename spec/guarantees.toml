@@ -91,6 +91,7 @@ ensures = 1
 fingerprint = "sha256:fcbbc2b9fe8fc3b7"
 importance = "高"
 guards = ["証明"]
+premises = ["applied-like-model"]
 proofs = ["NewTask"]
 code = ["internal/task", "internal/store"]
 rationale = "受け入れ条件 1。保存するタスクとイベントは、NewTask が返したものだけ（保存の層は、仕様の関数が作った状態の変更しか受け取らない）"
@@ -188,7 +189,7 @@ fingerprint = "sha256:9489b527e2a34f6c"
 importance = "高"
 guards = ["証明"]
 proofs = ["Finish"]
-premises = ["found-observed"]
+premises = ["found-observed", "applied-like-model"]
 code = ["internal/task", "internal/store"]
 rationale = "受け入れ条件 7・8、経緯を残す。保存するタスクとイベントは、Finish が返したものだけ"
 
