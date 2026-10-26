@@ -65,6 +65,31 @@ func TestタスクはDafnyの値に変換して戻すと元と同じになる(t 
 	}
 }
 
+// 不正な UTF-8 はエラーにせず、置き換えて保存すると決めた（#1 の 2 回目のレビュー）。
+// 期待値は、「不正なバイト 1 つにつき U+FFFD 1 つ」（Go の文字列を文字ごとに読むときの決まり）から手で書いたもの。
+// 文字の途中で切れたバイト列も、まとめずにバイトごとに置き換わる（Unicode が推奨する、まとめて 1 つにする形とは違う）
+func Test不正なUTF8は不正なバイトごとにU_FFFDへ置き換えて仕様に渡す(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"\xff\xfeタイトル", "\uFFFD\uFFFDタイトル"},
+		{"前\x80後", "前\uFFFD後"},
+		{"\xe3\x81", "\uFFFD\uFFFD"}, // 3 バイトの文字の途中で切れている
+	}
+	for _, c := range cases {
+		got, err := fromSeq(toSeq(c.in))
+		if err != nil || got != c.want {
+			t.Errorf("%q: got %q, %v, want %q", c.in, got, err, c.want)
+		}
+	}
+	// 登録の結果も、置き換えた値になる
+	ch, err := NewTask("0a1b2c3d", false, "\xffタイトル", "\xff", "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk := ch.Task(); tk.Title != "\uFFFDタイトル" || tk.Body != "\uFFFD" {
+		t.Errorf("got %+v", tk)
+	}
+}
+
 func TestイベントはDafnyの値に変換して戻すと元と同じになる(t *testing.T) {
 	todo, done := StatusTodo, StatusDone
 	reason := "理由🎉"
