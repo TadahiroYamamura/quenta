@@ -13,6 +13,7 @@ import (
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
+	schemadb "github.com/TadahiroYamamura/quenta/db"
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
 
@@ -29,47 +30,6 @@ func DefaultPath(getenv func(string) string) (string, error) {
 	}
 	return filepath.Join(dataHome, "quenta", "quenta.db"), nil
 }
-
-const schema = `
-CREATE TABLE IF NOT EXISTS tasks (
-	seq        INTEGER PRIMARY KEY AUTOINCREMENT, -- 登録した順
-	id         TEXT    NOT NULL UNIQUE,
-	title      TEXT    NOT NULL,
-	body       TEXT    NOT NULL,
-	status     TEXT    NOT NULL,
-	created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS events (
-	seq         INTEGER PRIMARY KEY AUTOINCREMENT, -- 記録した順
-	task_id     TEXT    NOT NULL REFERENCES tasks(id),
-	actor       TEXT    NOT NULL,
-	from_status TEXT,
-	to_status   TEXT    NOT NULL,
-	reason      TEXT,
-	at          INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS events_task_id ON events(task_id);
-
--- 以下のトリガーは、仕様の手本（Add・FinishTask）でしか証明できない性質を、DB の制約として守る（spec/task.dfy の保証の対応表）。
--- タスクは消えない（TasksNeverDisappear）。recursive_triggers を有効にして開くので、上書き（INSERT OR REPLACE）による削除でも起動する
-CREATE TRIGGER IF NOT EXISTS tasks_no_delete BEFORE DELETE ON tasks
-BEGIN SELECT RAISE(ABORT, 'tasks の行は削除できない'); END;
--- このストーリーで書き換える列は状態だけ。値を比べるのは、状態以外の列を同じ値で書く UPDATE を妨げないため。
--- 列を足したら、ここにも足す
-CREATE TRIGGER IF NOT EXISTS tasks_only_status_changes BEFORE UPDATE ON tasks
-WHEN NEW.seq IS NOT OLD.seq OR NEW.id IS NOT OLD.id OR NEW.title IS NOT OLD.title
-  OR NEW.body IS NOT OLD.body OR NEW.created_at IS NOT OLD.created_at
-BEGIN SELECT RAISE(ABORT, 'tasks の状態以外の列は書き換えられない'); END;
--- 終わったタスクは変わらない（FinishRejectsFinished）。仕様の IsFinished が終わったとする状態を列挙している。状態を足したら、ここも見直す
-CREATE TRIGGER IF NOT EXISTS tasks_finished_frozen BEFORE UPDATE ON tasks
-WHEN OLD.status IN ('done', 'canceled')
-BEGIN SELECT RAISE(ABORT, '終わったタスクは書き換えられない'); END;
--- イベントは追記だけ（EventsAppendOnly）
-CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
-BEGIN SELECT RAISE(ABORT, 'events の行は書き換えられない'); END;
-CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
-BEGIN SELECT RAISE(ABORT, 'events の行は削除できない'); END;
-`
 
 type Store struct {
 	db *sql.DB
@@ -91,8 +51,16 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	ms, err := loadMigrations(schemadb.Migrations, "migrations")
+	if err != nil {
 		db.Close()
+		return nil, err
+	}
+	if err := migrate(context.Background(), db, ms); err != nil {
+		db.Close()
+		if task.CodeOf(err) == task.CodeUnsupportedDBVersion {
+			return nil, err
+		}
 		return nil, fmt.Errorf("データベースを用意できない: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -100,23 +68,41 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// InsertTask は、登録の状態の変更（新しいタスクとその登録のイベント）を保存する。ID が既にあれば id_conflict を返し、何も保存しない
-func (s *Store) InsertTask(ctx context.Context, c task.Change) error {
-	if !c.IsNew() {
-		return task.Errorf(task.CodeInternal, "登録でない状態の変更を登録として保存しようとした")
-	}
-	return s.inTx(ctx, func(tx *sql.Tx) error { return save(ctx, tx, c) })
-}
-
-// UpdateTask は、id のタスクを読み、change が返した状態の変更を保存する。change がエラーを返せば何も保存しない
-func (s *Store) UpdateTask(ctx context.Context, id string, change func(task.Task) (task.Change, error)) (task.Task, error) {
-	var updated task.Task
+// InsertTask は、id のタスクが既にあるかを調べて build に渡し、build が返した登録の状態の変更を保存する。
+// build がエラーを返せば何も保存しない。調べた後に別の書き手が同じ ID を保存していれば、一意の制約が拒み id_conflict を返す
+func (s *Store) InsertTask(ctx context.Context, id string, build func(idTaken bool) (task.Change, error)) (task.Task, error) {
+	var added task.Task
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		cur, err := getTask(ctx, tx, id)
+		found, err := findTask(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		c, err := change(cur)
+		c, err := build(found != nil)
+		if err != nil {
+			return err
+		}
+		if !c.IsNew() || c.Task().ID != id {
+			return task.Errorf(task.CodeInternal, "タスク %s の登録として、別の状態の変更を保存しようとした", id)
+		}
+		if err := save(ctx, tx, c); err != nil {
+			return err
+		}
+		added = c.Task()
+		return nil
+	})
+	return added, err
+}
+
+// UpdateTask は、id のタスクを探して change に渡し（なければ nil）、change が返した状態の変更を保存する。
+// change がエラーを返せば何も保存しない
+func (s *Store) UpdateTask(ctx context.Context, id string, change func(found *task.Task) (task.Change, error)) (task.Task, error) {
+	var updated task.Task
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		found, err := findTask(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		c, err := change(found)
 		if err != nil {
 			return err
 		}
@@ -133,7 +119,7 @@ func (s *Store) UpdateTask(ctx context.Context, id string, change func(task.Task
 }
 
 // save は、状態の変更を保存する。tasks と events に書き込むのは、この関数だけ。
-// タスクとイベントを同じトランザクションの中で続けて書き、片方だけが残らないようにする（spec/task.dfy の FinishOneResult のコメント）
+// タスクとイベントを同じトランザクションの中で続けて書き、片方だけが残らないようにする
 func save(ctx context.Context, tx *sql.Tx, c task.Change) error {
 	if !c.FromSpec() {
 		return task.Errorf(task.CodeInternal, "仕様の関数が作っていない状態の変更を保存しようとした")
@@ -150,7 +136,7 @@ func save(ctx context.Context, tx *sql.Tx, c task.Change) error {
 			return err
 		}
 	} else {
-		// 書き換えるのは状態だけ。仕様の Finish は状態以外を変えない（FinishOneResult）
+		// 書き換えるのは状態だけ。仕様の Finish は状態以外を変えない（FinishResult）
 		res, err := tx.ExecContext(ctx, `UPDATE tasks SET status = ? WHERE id = ?`, string(t.Status), t.ID)
 		if err != nil {
 			return err
@@ -174,9 +160,9 @@ func save(ctx context.Context, tx *sql.Tx, c task.Change) error {
 	return err
 }
 
-// GetTask は、id のタスクを返す。なければ not_found
-func (s *Store) GetTask(ctx context.Context, id string) (task.Task, error) {
-	return getTask(ctx, s.db, id)
+// FindTask は、id のタスクを返す。なければ nil
+func (s *Store) FindTask(ctx context.Context, id string) (*task.Task, error) {
+	return findTask(ctx, s.db, id)
 }
 
 // ListTasks は、すべてのタスクを、作成日時の古い順（同じなら登録した順）に返す
@@ -264,13 +250,23 @@ type queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-func getTask(ctx context.Context, q queryer, id string) (task.Task, error) {
-	row := q.QueryRowContext(ctx, `SELECT id, title, body, status, created_at FROM tasks WHERE id = ?`, id)
-	t, err := scanTask(row)
+// テストで、別の行を返す問い合わせに差し替え、ID の確かめがはたらくことを確かめる
+var findTaskQuery = `SELECT id, title, body, status, created_at FROM tasks WHERE id = ?`
+
+// findTask は、id のタスクを返す。なければ nil。
+// 返すタスクの ID が id と違えば internal にする。探し違えて別のタスクを仕様の関数に渡すと、そのタスクを完了・中止にしてしまうため
+func findTask(ctx context.Context, q queryer, id string) (*task.Task, error) {
+	t, err := scanTask(q.QueryRowContext(ctx, findTaskQuery, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return task.Task{}, task.Errorf(task.CodeNotFound, "タスク %s がない", id)
+		return nil, nil
 	}
-	return t, err
+	if err != nil {
+		return nil, err
+	}
+	if t.ID != id {
+		return nil, task.Errorf(task.CodeInternal, "タスク %s を探して、別のタスク %s を読んだ", id, t.ID)
+	}
+	return &t, nil
 }
 
 type scanner interface {

@@ -52,30 +52,21 @@ func (a *App) Add(ctx context.Context, title, body, actor string) (task.Task, er
 		if err != nil {
 			return task.Task{}, err
 		}
-		c, err := task.NewTask(id, title, body, actor, now)
-		if err != nil {
-			return task.Task{}, err
-		}
-		err = a.store.InsertTask(ctx, c)
+		t, err := a.store.InsertTask(ctx, id, func(idTaken bool) (task.Change, error) {
+			return task.NewTask(id, idTaken, title, body, actor, now)
+		})
 		if task.CodeOf(err) == task.CodeIDConflict {
 			continue
 		}
-		if err != nil {
-			return task.Task{}, err
-		}
-		return c.Task(), nil
+		return t, err
 	}
 	return task.Task{}, task.Errorf(task.CodeInternal, "%d 回続けて既にある ID ができた", maxIDAttempts)
 }
 
 func (a *App) Finish(ctx context.Context, id string, o task.Outcome, reason, actor string) (task.Task, error) {
-	// 仕様の FinishTask と同じく、引数の誤りはタスクを探す前に返す
-	if err := task.FinishArgsError(reason, actor); err != nil {
-		return task.Task{}, err
-	}
 	now := a.now().UnixMilli()
-	return a.store.UpdateTask(ctx, id, func(cur task.Task) (task.Change, error) {
-		return task.Finish(cur, o, reason, actor, now)
+	return a.store.UpdateTask(ctx, id, func(found *task.Task) (task.Change, error) {
+		return task.Finish(found, o, reason, actor, now)
 	})
 }
 
@@ -98,11 +89,15 @@ func (a *App) List(ctx context.Context, includeFinished bool) ([]task.Task, erro
 }
 
 func (a *App) Show(ctx context.Context, id string) (task.Task, []task.Event, error) {
-	t, err := a.store.GetTask(ctx, id)
+	found, err := a.store.FindTask(ctx, id)
 	if err != nil {
 		return task.Task{}, nil, err
 	}
-	evs, err := a.store.EventsOf(ctx, id)
+	t, err := task.ShowTask(found)
+	if err != nil {
+		return task.Task{}, nil, err
+	}
+	evs, err := a.store.EventsOf(ctx, t.ID)
 	if err != nil {
 		return task.Task{}, nil, err
 	}

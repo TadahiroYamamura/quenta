@@ -145,22 +145,24 @@ func toSpecEvent(e Event) (spec.Event, error) {
 	return spec.Companion_Event_.Create_Event_(toSeq(e.TaskID), toSeq(e.Actor), from, to, reason, e.At), nil
 }
 
+// fromSpecError は、仕様のエラーを、仕様の ErrorCode が決めたエラーコードのエラーにする
 func fromSpecError(e spec.Error) *Error {
-	switch {
-	case e.Is_SessionRequired():
-		return Errorf(CodeSessionRequired, "環境変数 QUENTA_SESSION がない")
-	case e.Is_TitleRequired():
-		return Errorf(CodeTitleRequired, "タイトルが空")
-	case e.Is_ReasonRequired():
-		return Errorf(CodeReasonRequired, "理由が空")
-	case e.Is_NotFound():
-		return Errorf(CodeNotFound, "タスクがない")
-	case e.Is_AlreadyFinished():
-		return Errorf(CodeAlreadyFinished, "終わったタスクの状態は変えられない")
-	case e.Is_IdConflict():
-		return Errorf(CodeIDConflict, "ID が既にある")
+	code, err := fromSeq(spec.Companion_Default___.ErrorCode(e))
+	if err != nil {
+		return Errorf(CodeInternal, "仕様のエラーコードを読めない: %v", err)
 	}
-	return Errorf(CodeInternal, "仕様に未知のエラー: %v", e)
+	return &Error{Code: Code(code), Message: errorMessages[Code(code)]}
+}
+
+// 利用者（AI）に返すエラーの説明。エラーコードは仕様が決め、説明は Go が持つ。
+// 仕様のエラーのすべてに説明があることは、テストで確かめる
+var errorMessages = map[Code]string{
+	CodeSessionRequired: "環境変数 QUENTA_SESSION がない",
+	CodeTitleRequired:   "タイトルが空",
+	CodeReasonRequired:  "理由が空",
+	CodeNotFound:        "タスクがない",
+	CodeAlreadyFinished: "終わったタスクの状態は変えられない",
+	CodeIDConflict:      "ID が既にある",
 }
 
 // taskEventPair は、仕様の Ok((Task, Event)) から値を取り出す

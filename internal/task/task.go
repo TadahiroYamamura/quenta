@@ -41,16 +41,20 @@ type Event struct {
 
 type Code string
 
+// 仕様のエラーのコードは、仕様の ErrorCode が決める。ここの値が ErrorCode と一致することは、テストで確かめる
 const (
 	CodeSessionRequired Code = "session_required"
 	CodeTitleRequired   Code = "title_required"
 	CodeReasonRequired  Code = "reason_required"
 	CodeNotFound        Code = "not_found"
 	CodeAlreadyFinished Code = "already_finished"
-	CodeInvalidArgument Code = "invalid_argument"
-	CodeInternal        Code = "internal"
 	// 利用者には返さない。登録の処理が ID を作り直す合図
 	CodeIDConflict Code = "id_conflict"
+	// 以下は仕様の外のエラー
+	CodeInvalidArgument Code = "invalid_argument"
+	CodeInternal        Code = "internal"
+	// データベースが、この版の知らない移行まで当たっている（新しい版が作った）
+	CodeUnsupportedDBVersion Code = "unsupported_db_version"
 )
 
 // Error は、利用者にエラーコードとして返すエラー

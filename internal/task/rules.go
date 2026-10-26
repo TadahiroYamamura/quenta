@@ -26,8 +26,9 @@ func (c Change) IsNew() bool { return c.isNew }
 // FromSpec は、仕様の NewTask・Finish が作った値か
 func (c Change) FromSpec() bool { return c.fromSpec }
 
-func NewTask(id, title, body, actor string, now int64) (Change, error) {
-	r := spec.Companion_Default___.NewTask(toSeq(id), toSeq(title), toSeq(body), toSeq(actor), now)
+// NewTask は、登録の状態の変更を作る。idTaken は、DB で調べた「その ID のタスクが既にあるか」
+func NewTask(id string, idTaken bool, title, body, actor string, now int64) (Change, error) {
+	r := spec.Companion_Default___.NewTask(toSeq(id), idTaken, toSeq(title), toSeq(body), toSeq(actor), now)
 	t, e, err := taskEventPair(r)
 	if err != nil {
 		return Change{}, err
@@ -35,21 +36,10 @@ func NewTask(id, title, body, actor string, now int64) (Change, error) {
 	return Change{task: t, event: e, isNew: true, fromSpec: true}, nil
 }
 
-func FinishArgsError(reason, actor string) error {
-	r := spec.Companion_Default___.FinishArgsError(toSeq(reason), toSeq(actor))
-	if r.Is_None() {
-		return nil
-	}
-	e, ok := r.Dtor_value().(spec.Error)
-	if !ok {
-		return Errorf(CodeInternal, "仕様の判定の結果が Error でない: %T", r.Dtor_value())
-	}
-	return fromSpecError(e)
-}
-
-// Finish は、DB から読んだタスク t を完了・中止にする。t が仕様の不変条件（ValidTask）を満たさなければ internal
-func Finish(t Task, o Outcome, reason, actor string, now int64) (Change, error) {
-	st, err := toValidSpecTask(t)
+// Finish は、完了・中止の状態の変更を作る。found は、DB で ID のタスクを探した結果（なければ nil）。
+// found が仕様の不変条件（ValidTask）を満たさなければ internal
+func Finish(found *Task, o Outcome, reason, actor string, now int64) (Change, error) {
+	sf, err := toValidSpecFound(found)
 	if err != nil {
 		return Change{}, err
 	}
@@ -57,12 +47,42 @@ func Finish(t Task, o Outcome, reason, actor string, now int64) (Change, error) 
 	if err != nil {
 		return Change{}, err
 	}
-	r := spec.Companion_Default___.Finish(st, so, toSeq(reason), toSeq(actor), now)
+	r := spec.Companion_Default___.Finish(sf, so, toSeq(reason), toSeq(actor), now)
 	nt, e, err := taskEventPair(r)
 	if err != nil {
 		return Change{}, err
 	}
 	return Change{task: nt, event: e, isNew: false, fromSpec: true}, nil
+}
+
+// ShowTask は、詳細に出すタスクを返す。found は、DB で ID のタスクを探した結果（なければ nil）。
+// found が仕様の不変条件（ValidTask）を満たさなければ internal
+func ShowTask(found *Task) (Task, error) {
+	sf, err := toValidSpecFound(found)
+	if err != nil {
+		return Task{}, err
+	}
+	r := spec.Companion_Default___.ShowTask(sf)
+	if r.Is_Err() {
+		return Task{}, fromSpecError(r.Dtor_error())
+	}
+	st, ok := r.Dtor_value().(spec.Task)
+	if !ok {
+		return Task{}, Errorf(CodeInternal, "詳細の結果が Task でない: %T", r.Dtor_value())
+	}
+	return fromSpecTask(st)
+}
+
+// toValidSpecFound は、DB で探した結果を仕様の Option<Task> にする。タスクがあれば、仕様の不変条件を満たすか確かめる
+func toValidSpecFound(found *Task) (spec.Option, error) {
+	if found == nil {
+		return spec.Companion_Option_.Create_None_(), nil
+	}
+	st, err := toValidSpecTask(*found)
+	if err != nil {
+		return spec.Option{}, err
+	}
+	return spec.Companion_Option_.Create_Some_(st), nil
 }
 
 // IsVisible は、DB から読んだタスク t を一覧に出すか。t が仕様の不変条件（ValidTask）を満たさなければ internal
