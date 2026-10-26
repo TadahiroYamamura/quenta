@@ -8,8 +8,8 @@ import (
 	"unicode"
 )
 
-// 実装が呼ぶ仕様の関数（NewTask・Finish・ShowTask・IsVisible）のプロパティベースのテスト。
-// 無作為な入力で呼び、spec/task.dfy の補題（NewTaskErrors・NewTaskResult・FinishErrors・FinishRejectsFinished・FinishResult・ShowTaskResult）が述べる結果を、
+// 実装が呼ぶ仕様の関数（NewTask・Finish・IsVisible）のプロパティベースのテスト。ShowTask は入力が少ないので、単体テストで全部の場合を回す。
+// 無作為な入力で呼び、spec/task.dfy の補題（NewTaskErrors・NewTaskResult・FinishErrors・FinishRejectsFinished・FinishResult）が述べる結果を、
 // 仕様から変換したコードを使わずに Go で書いた期待値と比べる。
 // internal/app のプロパティベースのテストは、手本（task.Model）が同じ仕様の関数を使うので、仕様そのものの誤りはそちらでは見つからないため
 
