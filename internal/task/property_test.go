@@ -8,8 +8,8 @@ import (
 	"unicode"
 )
 
-// 実装が呼ぶ仕様の関数（NewTask・FinishArgsError・Finish・IsVisible）のプロパティベースのテスト。
-// 無作為な入力で呼び、spec/task.dfy の補題（NewTaskResult・FinishArgsErrorResult・FinishRejectsFinished・FinishOneResult）が述べる結果を、
+// 実装が呼ぶ仕様の関数（NewTask・Finish・ShowTask・IsVisible）のプロパティベースのテスト。
+// 無作為な入力で呼び、spec/task.dfy の補題（NewTaskErrors・NewTaskResult・FinishErrors・FinishRejectsFinished・FinishResult・ShowTaskResult）が述べる結果を、
 // 仕様から変換したコードを使わずに Go で書いた期待値と比べる。
 // internal/app のプロパティベースのテストは、手本（task.Model）が同じ仕様の関数を使うので、仕様そのものの誤りはそちらでは見つからないため
 
@@ -70,15 +70,16 @@ func requireAll(t *testing.T, seen map[string]int, keys ...string) {
 	}
 }
 
-func Test無作為な入力で登録は補題NewTaskResultどおりの結果を返す(t *testing.T) {
+func Test無作為な入力で登録は補題NewTaskErrorsとNewTaskResultどおりの結果を返す(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 0))
 	seen := map[string]int{}
-	defer func() { requireAll(t, seen, "session_required", "title_required", "ok") }()
+	defer func() { requireAll(t, seen, "session_required", "title_required", "id_conflict", "ok") }()
 	for i := range propRuns {
 		id, title, body, actor := fmt.Sprintf("%08x", rng.Uint32()), randomText(rng), randomText(rng), randomText(rng)
+		idTaken := rng.IntN(4) == 0
 		now := rng.Int64() - rng.Int64()
-		c, err := NewTask(id, title, body, actor, now)
-		desc := fmt.Sprintf("#%d title=%q body=%q actor=%q", i, title, body, actor)
+		c, err := NewTask(id, idTaken, title, body, actor, now)
+		desc := fmt.Sprintf("#%d idTaken=%v title=%q body=%q actor=%q", i, idTaken, title, body, actor)
 		switch {
 		case blank(actor):
 			seen["session_required"]++
@@ -89,6 +90,11 @@ func Test無作為な入力で登録は補題NewTaskResultどおりの結果を�
 			seen["title_required"]++
 			if CodeOf(err) != CodeTitleRequired {
 				t.Fatalf("%s: got %v, want title_required", desc, err)
+			}
+		case idTaken:
+			seen["id_conflict"]++
+			if CodeOf(err) != CodeIDConflict {
+				t.Fatalf("%s: got %v, want id_conflict", desc, err)
 			}
 		default:
 			seen["ok"]++
@@ -108,11 +114,11 @@ func Test無作為な入力で登録は補題NewTaskResultどおりの結果を�
 	}
 }
 
-func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFinishOneResultどおりの結果を返す(t *testing.T) {
+func Test無作為な入力で完了と中止は補題FinishErrorsとFinishResultどおりの結果を返す(t *testing.T) {
 	rng := rand.New(rand.NewPCG(2, 0))
 	seen := map[string]int{}
 	defer func() {
-		requireAll(t, seen, "session_required", "reason_required", "already_finished:done", "already_finished:canceled", "ok:done", "ok:canceled")
+		requireAll(t, seen, "session_required", "reason_required", "not_found", "already_finished:done", "already_finished:canceled", "ok:done", "ok:canceled")
 	}()
 	for i := range propRuns {
 		// DB から読んだタスクは不変条件（タイトルが空でない）を満たす前提なので、タイトルには空白でない文字を必ず含める
@@ -120,32 +126,40 @@ func Test無作為な入力で完了と中止は補題FinishArgsErrorResultとFi
 			ID: fmt.Sprintf("%08x", rng.Uint32()), Title: randomText(rng) + "t", Body: randomText(rng),
 			Status: propStatuses[rng.IntN(len(propStatuses))], CreatedAt: rng.Int64() - rng.Int64(),
 		}
+		var found *Task
+		if rng.IntN(4) != 0 {
+			found = &cur
+		}
 		o := propOutcomes[rng.IntN(len(propOutcomes))]
 		reason, actor := randomText(rng), randomText(rng)
 		now := rng.Int64() - rng.Int64()
-		desc := fmt.Sprintf("#%d task=%+v outcome=%d reason=%q actor=%q", i, cur, o, reason, actor)
+		desc := fmt.Sprintf("#%d found=%v task=%+v outcome=%d reason=%q actor=%q", i, found != nil, cur, o, reason, actor)
 
-		argErr := FinishArgsError(reason, actor)
-		c, err := Finish(cur, o, reason, actor, now)
+		c, err := Finish(found, o, reason, actor, now)
 		switch {
 		case blank(actor):
 			seen["session_required"]++
-			if CodeOf(argErr) != CodeSessionRequired || CodeOf(err) != CodeSessionRequired {
-				t.Fatalf("%s: got %v / %v, want session_required", desc, argErr, err)
+			if CodeOf(err) != CodeSessionRequired {
+				t.Fatalf("%s: got %v, want session_required", desc, err)
 			}
 		case blank(reason):
 			seen["reason_required"]++
-			if CodeOf(argErr) != CodeReasonRequired || CodeOf(err) != CodeReasonRequired {
-				t.Fatalf("%s: got %v / %v, want reason_required", desc, argErr, err)
+			if CodeOf(err) != CodeReasonRequired {
+				t.Fatalf("%s: got %v, want reason_required", desc, err)
+			}
+		case found == nil:
+			seen["not_found"]++
+			if CodeOf(err) != CodeNotFound {
+				t.Fatalf("%s: got %v, want not_found", desc, err)
 			}
 		case finished(t, cur.Status):
 			seen["already_finished:"+string(cur.Status)]++
-			if argErr != nil || CodeOf(err) != CodeAlreadyFinished {
-				t.Fatalf("%s: got %v / %v, want nil / already_finished", desc, argErr, err)
+			if CodeOf(err) != CodeAlreadyFinished {
+				t.Fatalf("%s: got %v, want already_finished", desc, err)
 			}
 		default:
-			if argErr != nil || err != nil {
-				t.Fatalf("%s: got %v / %v", desc, argErr, err)
+			if err != nil {
+				t.Fatalf("%s: %v", desc, err)
 			}
 			// 状態だけが変わり、ID・タイトル・本文・作成日時は変わらない
 			want := cur
