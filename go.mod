@@ -3,6 +3,7 @@ module github.com/TadahiroYamamura/quenta
 go 1.26.9
 
 require (
+	github.com/rogpeppe/go-internal v1.14.1
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.61.0
 )
