@@ -1,0 +1,15 @@
+# AC01: タスクをタイトルと本文で登録すると、todo のタスクとして保存され、ID・タイトル・本文・状態・作成日時が JSON で返る
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 牛乳を買う --body 低脂肪のもの
+! stderr .
+stdout '^\{"task":\{"id":"[0-9a-f]{8}","title":"牛乳を買う","body":"低脂肪のもの","status":"todo","created_at":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"\}\}$'
+setjson ID task.id
+setjson CREATED task.created_at
+
+# 保存されている（別に起動した CLI から、同じ内容で見える）
+exec quenta task show $ID
+cmpenv stdout show.json
+
+-- show.json --
+{"task":{"id":"$ID","title":"牛乳を買う","body":"低脂肪のもの","status":"todo","created_at":"$CREATED"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":null,"at":"$CREATED"}]}

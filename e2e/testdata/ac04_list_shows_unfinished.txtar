@@ -1,0 +1,23 @@
+# AC04: 一覧を見ると、終わっていないタスクだけが返る
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title A --body 本文A
+setjson A task.id
+setjson A_AT task.created_at
+exec quenta task add --title B
+setjson B task.id
+exec quenta task add --title C
+setjson C task.id
+setjson C_AT task.created_at
+exec quenta task add --title D
+setjson D task.id
+
+exec quenta task done $B --reason 済んだ
+exec quenta task cancel $D --reason 要らない
+
+# 終わっていない A と C だけが、登録した順（作成日時の古い順）に返る。本文は一覧に含まない
+exec quenta task list
+cmpenv stdout want.json
+
+-- want.json --
+{"tasks":[{"id":"$A","title":"A","status":"todo","created_at":"$A_AT"},{"id":"$C","title":"C","status":"todo","created_at":"$C_AT"}]}

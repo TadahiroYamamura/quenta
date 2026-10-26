@@ -1,0 +1,21 @@
+# AC05: 終わったタスクも含めるよう指定すると、すべてのタスクが返る
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title A
+setjson A task.id
+setjson A_AT task.created_at
+exec quenta task add --title B --body 本文B
+setjson B task.id
+setjson B_AT task.created_at
+exec quenta task add --title C
+setjson C task.id
+setjson C_AT task.created_at
+
+exec quenta task done $A --reason 済んだ
+exec quenta task cancel $C --reason 要らない
+
+exec quenta task list --all
+cmpenv stdout want.json
+
+-- want.json --
+{"tasks":[{"id":"$A","title":"A","status":"done","created_at":"$A_AT"},{"id":"$B","title":"B","status":"todo","created_at":"$B_AT"},{"id":"$C","title":"C","status":"canceled","created_at":"$C_AT"}]}

@@ -1,0 +1,3 @@
+# Dafny から変換した Go。make が作る
+/internal/spec/
+/bin/

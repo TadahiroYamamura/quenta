@@ -1,0 +1,30 @@
+# AC03: タイトルが空なら登録できず、エラーコードが返る
+
+env QUENTA_SESSION=session-1
+
+# タイトルを指定しない
+! exec quenta task add
+! stdout .
+stderr '"code":"title_required"'
+
+# 空の文字列
+! exec quenta task add --title ''
+! stdout .
+stderr '"code":"title_required"'
+
+# 空白だけ（半角の空白、タブ、全角の空白）
+! exec quenta task add --title ' 	　'
+! stdout .
+stderr '"code":"title_required"'
+
+# 本文だけがある
+! exec quenta task add --title '' --body 本文だけ
+! stdout .
+stderr '"code":"title_required"'
+
+# どれも登録されていない
+exec quenta task list --all
+cmp stdout empty.json
+
+-- empty.json --
+{"tasks":[]}

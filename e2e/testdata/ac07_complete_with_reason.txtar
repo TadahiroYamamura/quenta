@@ -1,0 +1,25 @@
+# AC07: 理由を付けて完了にすると done になり、イベントが記録される
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 完了させる
+setjson ID task.id
+setjson AT task.created_at
+
+# 別のセッションが完了にする。返るタスクは done
+env QUENTA_SESSION=session-2
+exec quenta task done $ID --reason テストが通った
+! stderr .
+cmpenv stdout task.json
+
+# 保存され、完了のイベントが記録されている（主体、変更前、変更後、理由）
+exec quenta task show $ID
+setjson DONE_AT events.1.at
+# 完了のイベントの日時は、UTC のミリ秒までの形で、登録の日時とは違う（完了は別のコマンドで後から行った）
+stdout '"at":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"}]}$'
+! stdout '"at":"'$AT'"}]}$'
+cmpenv stdout show.json
+
+-- task.json --
+{"task":{"id":"$ID","title":"完了させる","body":"","status":"done","created_at":"$AT"}}
+-- show.json --
+{"task":{"id":"$ID","title":"完了させる","body":"","status":"done","created_at":"$AT"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":null,"at":"$AT"},{"actor":"session-2","from":"todo","to":"done","reason":"テストが通った","at":"$DONE_AT"}]}
