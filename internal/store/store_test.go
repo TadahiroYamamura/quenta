@@ -508,18 +508,14 @@ func Test終わったタスクは書き換えられない(t *testing.T) {
 
 // 守る: finish-rejects-finished, finished-unchanged-by-add, finished-unchanged-by-finish
 func Test仕様が終わったとみなす状態とトリガーが書き換えを拒む状態が一致する(t *testing.T) {
-	statuses, err := task.SpecStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(statuses) == 0 {
-		t.Fatal("仕様の状態が 1 つもない")
-	}
-	for i, st := range statuses {
-		finished, err := task.IsFinished(st)
+	// task.Statuses が仕様の状態とそろっていることは、task のテストで確かめている
+	for i, st := range task.Statuses {
+		// 仕様の IsVisible は、終わったタスクを、指定しなければ一覧に出さない
+		visible, err := task.IsVisible(task.Task{Title: "t", Status: st}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
+		finished := !visible
 		t.Run(string(st), func(t *testing.T) {
 			s, _ := openTemp(t)
 			id := fmt.Sprintf("%08x", i)
@@ -533,7 +529,7 @@ func Test仕様が終わったとみなす状態とトリガーが書き換え�
 				t.Fatalf("期待した制約でなく、別の理由で拒まれた: %v", err)
 			}
 			if rejected != finished {
-				t.Errorf("仕様の IsFinished=%v、トリガーが拒んだ=%v", finished, rejected)
+				t.Errorf("仕様で終わった=%v、トリガーが拒んだ=%v", finished, rejected)
 			}
 		})
 	}

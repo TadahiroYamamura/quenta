@@ -359,6 +359,9 @@ func Test仕様のすべての状態はGoの状態に変換して戻すと元と
 	if len(seen) != len(statuses) {
 		t.Errorf("仕様の状態 %d 個が、Go の %d 個の状態に変換された", len(statuses), len(seen))
 	}
+	if len(Statuses) != len(statuses) {
+		t.Errorf("Statuses が %d 個、仕様の状態が %d 個", len(Statuses), len(statuses))
+	}
 }
 
 func Test仕様のすべての終わらせ方にGoの終わらせ方がある(t *testing.T) {

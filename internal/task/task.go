@@ -4,6 +4,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 type Status string
@@ -80,9 +81,11 @@ func CodeOf(err error) Code {
 	return CodeInternal
 }
 
+// Statuses は、すべての状態。仕様の状態とそろっていることは、テストで確かめる
+var Statuses = []Status{StatusTodo, StatusDone, StatusCanceled}
+
 func ParseStatus(s string) (Status, error) {
-	switch Status(s) {
-	case StatusTodo, StatusDone, StatusCanceled:
+	if slices.Contains(Statuses, Status(s)) {
 		return Status(s), nil
 	}
 	return "", fmt.Errorf("未知の状態: %q", s)

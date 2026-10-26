@@ -135,33 +135,3 @@ func eventsFromSeq(seq _dafny.Sequence) ([]Event, error) {
 	}
 	return out, nil
 }
-
-// SpecStatuses は、仕様のすべての状態を返す。IsFinished と合わせて、DB のトリガーが仕様と同じ状態を「終わった」とみなすかを、テストで確かめるために使う
-func SpecStatuses() ([]Status, error) {
-	var out []Status
-	it := spec.Companion_Status_.AllSingletonConstructors()
-	for {
-		v, ok := it()
-		if !ok {
-			return out, nil
-		}
-		ss, ok := v.(spec.Status)
-		if !ok {
-			return nil, fmt.Errorf("状態の一覧の値が Status でない: %T", v)
-		}
-		s, err := fromSpecStatus(ss)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-}
-
-// IsFinished は、仕様が状態 s を終わったとみなすか
-func IsFinished(s Status) (bool, error) {
-	ss, err := toSpecStatus(s)
-	if err != nil {
-		return false, err
-	}
-	return spec.Companion_Default___.IsFinished(ss), nil
-}
