@@ -71,21 +71,11 @@ func (a *App) Finish(ctx context.Context, id string, o task.Outcome, reason, act
 }
 
 func (a *App) List(ctx context.Context, includeFinished bool) ([]task.Task, error) {
-	all, err := a.store.ListTasks(ctx)
+	all, err := a.store.AllTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := []task.Task{}
-	for _, t := range all {
-		visible, err := task.IsVisible(t, includeFinished)
-		if err != nil {
-			return nil, err
-		}
-		if visible {
-			out = append(out, t)
-		}
-	}
-	return out, nil
+	return task.List(all, includeFinished)
 }
 
 func (a *App) Show(ctx context.Context, id string) (task.Task, []task.Event, error) {

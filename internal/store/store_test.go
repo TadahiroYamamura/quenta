@@ -370,26 +370,26 @@ func Test探す処理が別のタスクを返すとinternalを返し何も変え
 	}
 }
 
-// 守る: list-order-by-created, list-order-ties
-func Test一覧は作成日時の古い順で作成日時が同じなら登録した順に返す(t *testing.T) {
+// 守る: tasks-observed
+func Test全件の読み出しは作成日時によらず登録した順にすべてのタスクを返す(t *testing.T) {
 	ctx := context.Background()
 	s, _ := openTemp(t)
-	// 登録した順と作成日時の順をずらし、同じ作成日時も混ぜる
-	for _, x := range []struct {
-		id string
-		at int64
-	}{{"00000001", 30}, {"00000002", 10}, {"00000003", 30}, {"00000004", 20}, {"00000005", 10}} {
-		add(t, s, x.id, "t", "", "s", x.at)
+	// 登録した順と作成日時の順をずらし、同じ作成日時と、終わったタスクも混ぜる
+	want := []string{"00000001", "00000002", "00000003", "00000004", "00000005"}
+	for i, at := range []int64{30, 10, 30, 20, 10} {
+		add(t, s, want[i], "t", "", "s", at)
 	}
-	got, err := s.ListTasks(ctx)
+	for id, o := range map[string]task.Outcome{"00000003": task.OutcomeComplete, "00000005": task.OutcomeCancel} {
+		if _, err := finish(s, id, o, "r", "s", 40); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.AllTasks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"00000002", "00000005", "00000004", "00000001", "00000003"}
-	for i := range want {
-		if got[i].ID != want[i] {
-			t.Fatalf("got order %v, want %v", ids(got), want)
-		}
+	if !equalStrings(ids(got), want) {
+		t.Errorf("got %v, want %v", ids(got), want)
 	}
 }
 
@@ -510,12 +510,12 @@ func Test終わったタスクは書き換えられない(t *testing.T) {
 func Test仕様が終わったとみなす状態とトリガーが書き換えを拒む状態が一致する(t *testing.T) {
 	// task.Statuses が仕様の状態とそろっていることは、task のテストで確かめている
 	for i, st := range task.Statuses {
-		// 仕様の IsVisible は、終わったタスクを、指定しなければ一覧に出さない
-		visible, err := task.IsVisible(task.Task{Title: "t", Status: st}, false)
+		// 仕様の List は、終わったタスクを、指定しなければ一覧に出さない
+		listed, err := task.List([]task.Task{{ID: "x", Title: "t", Status: st}}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		finished := !visible
+		finished := len(listed) == 0
 		t.Run(string(st), func(t *testing.T) {
 			s, _ := openTemp(t)
 			id := fmt.Sprintf("%08x", i)
@@ -617,8 +617,8 @@ func Test未知の状態が保存されていると読み出しはエラーを�
 	if _, err := s.FindTask(ctx, "0a1b2c3d"); err == nil {
 		t.Error("FindTask がエラーにならなかった")
 	}
-	if _, err := s.ListTasks(ctx); err == nil {
-		t.Error("ListTasks がエラーにならなかった")
+	if _, err := s.AllTasks(ctx); err == nil {
+		t.Error("AllTasks がエラーにならなかった")
 	}
 	if _, err := s.db.Exec(`INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('0a1b2c3d', 's', 'doing', 'done', 'r', 1)`); err != nil {
 		t.Fatal(err)

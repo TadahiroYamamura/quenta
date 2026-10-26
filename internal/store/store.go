@@ -189,18 +189,9 @@ func (s *Store) FindTask(ctx context.Context, id string) (*task.Task, error) {
 	return findTask(ctx, s.db, id)
 }
 
-// ListTasks は、すべてのタスクを、作成日時の古い順（同じなら登録した順）に返す
-func (s *Store) ListTasks(ctx context.Context) ([]task.Task, error) {
-	return s.queryTasks(ctx, `ORDER BY created_at, seq`)
-}
-
 // AllTasks は、すべてのタスクを登録した順に返す
 func (s *Store) AllTasks(ctx context.Context) ([]task.Task, error) {
-	return s.queryTasks(ctx, `ORDER BY seq`)
-}
-
-func (s *Store) queryTasks(ctx context.Context, orderBy string) ([]task.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, title, body, status, created_at FROM tasks `+orderBy)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, body, status, created_at FROM tasks ORDER BY seq`)
 	if err != nil {
 		return nil, err
 	}

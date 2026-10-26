@@ -253,14 +253,63 @@ func Test一覧には既定で終わっていないタスクだけを出し指�
 		{StatusCanceled, false, true},
 	}
 	for _, c := range cases {
-		got, err := IsVisible(Task{Title: "t", Status: c.s}, false)
+		got, err := visible(Task{Title: "t", Status: c.s}, false)
 		if err != nil || got != c.def {
 			t.Errorf("%s 既定: got %v, %v", c.s, got, err)
 		}
-		got, err = IsVisible(Task{Title: "t", Status: c.s}, true)
+		got, err = visible(Task{Title: "t", Status: c.s}, true)
 		if err != nil || got != c.withFinished {
 			t.Errorf("%s 全部: got %v, %v", c.s, got, err)
 		}
+	}
+}
+
+// visible は、タスク tk が 1 件だけの一覧に、tk が出るか
+func visible(tk Task, includeFinished bool) (bool, error) {
+	got, err := List([]Task{tk}, includeFinished)
+	return len(got) == 1, err
+}
+
+func Test一覧は作成日時の古い順で作成日時が同じなら渡した順に並べ値を変えずに返す(t *testing.T) {
+	// 渡す順（登録した順）と作成日時の順をずらし、同じ作成日時と、終わったタスクも混ぜる
+	in := []Task{
+		{ID: "00000001", Title: "一", Body: "本文", Status: StatusTodo, CreatedAt: 30},
+		{ID: "00000002", Title: "二", Status: StatusTodo, CreatedAt: 10},
+		{ID: "00000003", Title: "三", Status: StatusDone, CreatedAt: 5},
+		{ID: "00000004", Title: "四", Status: StatusTodo, CreatedAt: 30},
+		{ID: "00000005", Title: "五", Status: StatusCanceled, CreatedAt: 20},
+		{ID: "00000006", Title: "六", Status: StatusTodo, CreatedAt: 10},
+	}
+	byID := map[string]Task{}
+	for _, tk := range in {
+		byID[tk.ID] = tk
+	}
+	for _, c := range []struct {
+		includeFinished bool
+		want            []string
+	}{
+		{false, []string{"00000002", "00000006", "00000001", "00000004"}},
+		{true, []string{"00000003", "00000002", "00000006", "00000005", "00000001", "00000004"}},
+	} {
+		got, err := List(in, c.includeFinished)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(c.want) {
+			t.Fatalf("includeFinished=%v: got %+v", c.includeFinished, got)
+		}
+		for i, id := range c.want {
+			if got[i] != byID[id] {
+				t.Errorf("includeFinished=%v の %d 番目: got %+v, want %+v", c.includeFinished, i, got[i], byID[id])
+			}
+		}
+	}
+}
+
+func Test一覧はタスクがなければ空の列を返す(t *testing.T) {
+	got, err := List(nil, true)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Errorf("got %#v, %v", got, err)
 	}
 }
 
@@ -286,8 +335,8 @@ func Test保存されたタスクが不変条件を満たさなければ仕様�
 		if _, err := ShowTask(&broken); CodeOf(err) != CodeInternal {
 			t.Errorf("ShowTask(title=%q): %v", title, err)
 		}
-		if _, err := IsVisible(broken, true); CodeOf(err) != CodeInternal {
-			t.Errorf("IsVisible(title=%q): %v", title, err)
+		if _, err := List([]Task{{ID: "a", Title: "t"}, broken}, true); CodeOf(err) != CodeInternal {
+			t.Errorf("List(title=%q): %v", title, err)
 		}
 	}
 }

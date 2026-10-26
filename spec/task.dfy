@@ -1,7 +1,8 @@
 // タスクの状態と操作（#1）
 //
-// 実装（Go）が呼ぶ関数: NewTask、Finish、ShowTask、IsVisible、ValidTask、ErrorCode。IsBlank はテストから呼ぶ（実装では NewTask・Finish の中で使う）。
-// 全体の状態（State）の関数（Empty、Add、FinishTask、Show、List、Valid）は手本で、実装は同じことを DB で行う。テストで実装と突き合わせるためだけに呼ぶ。
+// 実装（Go）が呼ぶ関数: NewTask、Finish、ShowTask、List、IsVisible、ValidTask、ErrorCode。IsBlank はテストから呼ぶ（実装では NewTask・Finish の中で使う）。
+// 全体の状態（State）の関数（Empty、Add、FinishTask、Show、Valid）は手本で、実装は同じことを DB で行う。テストで実装と突き合わせるためだけに呼ぶ。
+// List だけは実装も呼ぶ。Go が DB から登録した順に読んだタスクの列を、イベントを空にした状態に入れて渡す（ImplListMatchesModel）。
 // 性質ごとの守り方（保証の対応表）は spec/guarantees.toml にある。
 // ID と現在時刻、DB で調べた事実（ID が使われているか、ID のタスク）は、仕様の外（Go）で用意し、引数で受け取る。
 module Quenta {
@@ -202,7 +203,7 @@ module Quenta {
   {
   }
 
-  // ---------- 全体の状態（手本。実装はこれらの関数を通らない） ----------
+  // ---------- 全体の状態（手本。実装は List のほかはこれらの関数を通らない） ----------
 
   // tasks は登録した順、events は記録した順
   datatype State = State(tasks: seq<Task>, events: seq<Event>)
@@ -236,6 +237,12 @@ module Quenta {
   predicate FoundObserved(st: State, id: string, found: Option<Task>)
   {
     found == Lookup(st, id)
+  }
+
+  // 前提: Go が一覧の前に DB から読んだタスクの列が、DB の状態のタスクの列（登録した順）と一致する
+  predicate TasksObserved(st: State, tasks: seq<Task>)
+  {
+    tasks == st.tasks
   }
 
   // 登録（手本）。ID が使われているかを、状態から正しく調べて NewTask に渡す
@@ -340,6 +347,14 @@ module Quenta {
   lemma ImplShowMatchesModel(st: State, id: string, found: Option<Task>)
     requires FoundObserved(st, id, found)
     ensures ShowTask(found) == ShowTask(Lookup(st, id))
+  {
+  }
+
+  // 実装の一覧。Go が渡したタスクの列が DB と一致すれば（TasksObserved）、それをイベントを空にした状態に入れて呼んだ List の結果は、
+  // DB の状態での List と同じ（List はタスクの列しか見ないため）。ListOrdered の性質は、これで実装の一覧に移る
+  lemma ImplListMatchesModel(st: State, tasks: seq<Task>, includeFinished: bool)
+    requires TasksObserved(st, tasks)
+    ensures List(State(tasks, []), includeFinished) == List(st, includeFinished)
   {
   }
 
@@ -663,7 +678,7 @@ module Quenta {
   {
   }
 
-  // 一覧（手本）: ID が重ならない状態で、一覧に出すタスクがちょうど 1 回ずつ、作成日時の古い順（同じなら登録した順）に並ぶ。
+  // 一覧: ID が重ならない状態で、一覧に出すタスクがちょうど 1 回ずつ、作成日時の古い順（同じなら登録した順）に並ぶ。
   // 全体を一度に証明させると、証明器の乱数の種によって数秒から 2 分以上までばらつき、CI で時間切れになった（#16）。
   // 主張ごとに分けると、どの種でも 1 件 0.3 秒以内で終わる
   lemma {:isolate_assertions} ListOrdered(st: State, includeFinished: bool)

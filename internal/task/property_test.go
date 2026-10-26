@@ -189,7 +189,7 @@ func Test無作為な入力で一覧に出すかは終わっていないかと�
 		tk := Task{ID: "x", Title: randomText(rng) + "t", Status: propStatuses[rng.IntN(len(propStatuses))]}
 		inc := rng.IntN(2) == 0
 		seen[fmt.Sprintf("%s:%v", tk.Status, inc)]++
-		got, err := IsVisible(tk, inc)
+		got, err := visible(tk, inc)
 		if want := inc || !finished(t, tk.Status); err != nil || got != want {
 			t.Fatalf("#%d status=%s includeFinished=%v: got %v, %v, want %v", i, tk.Status, inc, got, err, want)
 		}

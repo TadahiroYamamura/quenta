@@ -2,6 +2,7 @@ package task
 
 import (
 	spec "github.com/TadahiroYamamura/quenta/internal/spec/Quenta"
+	_dafny "github.com/TadahiroYamamura/quenta/internal/spec/dafny"
 )
 
 // 判定と遷移は、仕様（spec/task.dfy）から変換した関数に任せる。ここは型を変換して呼ぶだけ
@@ -85,13 +86,33 @@ func toValidSpecFound(found *Task) (spec.Option, error) {
 	return spec.Companion_Option_.Create_Some_(st), nil
 }
 
-// IsVisible は、DB から読んだタスク t を一覧に出すか。t が仕様の不変条件（ValidTask）を満たさなければ internal
-func IsVisible(t Task, includeFinished bool) (bool, error) {
-	st, err := toValidSpecTask(t)
-	if err != nil {
-		return false, err
+// List は、DB から登録した順に読んだすべてのタスクから、一覧に出すものを、仕様の List の順に返す。
+// 仕様の List は全体の状態を受け取るが、タスクの列しか見ないので、イベントは空にして渡す（仕様の ImplListMatchesModel）。
+// 不変条件（ValidTask）を満たさないタスクがあれば internal
+func List(tasks []Task, includeFinished bool) ([]Task, error) {
+	in := make([]any, len(tasks))
+	for i, t := range tasks {
+		st, err := toValidSpecTask(t)
+		if err != nil {
+			return nil, err
+		}
+		in[i] = st
 	}
-	return spec.Companion_Default___.IsVisible(st, includeFinished), nil
+	state := spec.Companion_State_.Create_State_(_dafny.SeqOf(in...), _dafny.SeqOf())
+	listed := spec.Companion_Default___.List(state, includeFinished)
+	out := make([]Task, 0, listed.Cardinality())
+	for i := range listed.Cardinality() {
+		st, ok := listed.Select(i).(spec.Task)
+		if !ok {
+			return nil, Errorf(CodeInternal, "仕様の List が返した %d 番目の値が Task でない: %T", i, listed.Select(i))
+		}
+		t, err := fromSpecTask(st)
+		if err != nil {
+			return nil, Errorf(CodeInternal, "仕様の List が返したタスクを変換できない: %v", err)
+		}
+		out = append(out, t)
+	}
+	return out, nil
 }
 
 // toValidSpecTask は、DB から読んだタスクを仕様の値にし、仕様の不変条件を満たすか確かめる。

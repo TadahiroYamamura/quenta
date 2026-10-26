@@ -56,7 +56,7 @@ func (g *stepIDs) next() (string, error) {
 	return id, nil
 }
 
-// 守る: applied-like-model, found-observed, id-taken-observed, stored-state-valid, add-result, finish-task-result, finished-unchanged-by-add, tasks-never-disappear-add, events-append-only-add, events-append-only-finish, list-only-visible, list-all-visible, list-no-duplicates, list-order-by-created, show-result, unique-ids
+// 守る: applied-like-model, found-observed, id-taken-observed, tasks-observed, stored-state-valid, add-result, finish-task-result, finished-unchanged-by-add, tasks-never-disappear-add, events-append-only-add, events-append-only-finish, list-only-visible, list-all-visible, list-no-duplicates, list-order-by-created, show-result, unique-ids
 func Test無作為な操作の列で実装は仕様の手本と同じ結果になり仕様の性質が成り立つ(t *testing.T) {
 	seen := map[string]int{}
 	for seed := uint64(1); seed <= propRuns; seed++ {
