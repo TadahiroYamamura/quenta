@@ -6,3 +6,9 @@ file = "internal/task/task.go"
 type = "ARITHMETIC_BASE"
 code = "OutcomeComplete Outcome = iota + 1"
 reason = "終わらせ方の定数の値をずらす変異。値は名前の付いた定数（OutcomeComplete・OutcomeCancel）でしか使わず、ゼロ値に意味を持たせていないので、ずらしても振る舞いは変わらない"
+
+[[exclusion]]
+file = "internal/store/store.go"
+type = "ARITHMETIC_BASE"
+code = "time.Sleep(10 * time.Millisecond)"
+reason = "WAL への切り替えを、ほかのセッションと取り合って失敗したときに、やり直すまで待つ間隔をずらす変異。間隔が変わってもやり直す回数が変わるだけで、諦めるまでの時間（busy_timeout と同じ 5 秒）と結果は変わらない"

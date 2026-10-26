@@ -51,6 +51,7 @@ func TestRandomIDは16進8桁を返す(t *testing.T) {
 	}
 }
 
+// 守る: unique-ids, id-taken-observed, new-task-id-conflict
 func Test作ったIDが既にあれば作り直して登録し既存のタスクは変わらない(t *testing.T) {
 	ctx := context.Background()
 	a, s := newTestApp(t, WithIDGenerator(ids("0000000a", "0000000a", "0000000a", "0000000b")))
@@ -65,8 +66,8 @@ func Test作ったIDが既にあれば作り直して登録し既存のタスク
 	if first.ID != "0000000a" || second.ID != "0000000b" {
 		t.Errorf("IDs: %s, %s", first.ID, second.ID)
 	}
-	got, _ := s.GetTask(ctx, "0000000a")
-	if got != first {
+	got, err := s.FindTask(ctx, "0000000a")
+	if err != nil || got == nil || *got != first {
 		t.Errorf("既存のタスクが変わった: %+v", got)
 	}
 	evs, _ := s.AllEvents(ctx)
@@ -75,6 +76,7 @@ func Test作ったIDが既にあれば作り直して登録し既存のタスク
 	}
 }
 
+// 守る: unique-ids, new-task-id-conflict
 func TestIDが既にあるものしか作れなければinternalを返し何も登録しない(t *testing.T) {
 	ctx := context.Background()
 	a, s := newTestApp(t, WithIDGenerator(ids("0000000a")))
@@ -106,7 +108,7 @@ func Test登録できない入力ならIDを作らずエラーを返す(t *testi
 	}
 }
 
-func Test完了と中止は引数の誤りをタスクを探す前に返す(t *testing.T) {
+func Test完了と中止は主体と理由の誤りをタスクがないことより先に返す(t *testing.T) {
 	ctx := context.Background()
 	a, _ := newTestApp(t)
 	cases := []struct {
@@ -148,7 +150,8 @@ func Test登録と完了の日時は現在時刻のミリ秒になる(t *testing
 	}
 }
 
-func Test保存されたタスクが不変条件を満たさなければ完了も一覧もinternalを返す(t *testing.T) {
+// 守る: valid-task, stored-state-valid
+func Test保存されたタスクが不変条件を満たさなければ完了も一覧も詳細もinternalを返す(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "quenta.db")
 	s, err := store.Open(path)
@@ -174,6 +177,9 @@ func Test保存されたタスクが不変条件を満たさなければ完了�
 		if _, err := a.List(ctx, inc); task.CodeOf(err) != task.CodeInternal {
 			t.Errorf("一覧（includeFinished=%v）: %v", inc, err)
 		}
+	}
+	if _, _, err := a.Show(ctx, "0000000a"); task.CodeOf(err) != task.CodeInternal {
+		t.Errorf("詳細: %v", err)
 	}
 	// 完了は保存していない
 	if evs, _ := s.EventsOf(ctx, "0000000a"); len(evs) != 1 {

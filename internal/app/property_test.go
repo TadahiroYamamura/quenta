@@ -15,7 +15,8 @@ import (
 
 // プロパティベースのテスト。無作為な操作の列を、実装（App と SQLite）と仕様の手本（task.Model。Dafny の State の操作を変換したもの）の両方に送り、
 // 各歩で次を確かめる。括弧内は spec/task.dfy の対応する性質
-//   - 実装の結果（エラーコード、タスク、イベント、一覧、詳細）が手本と同じ（AddResult・AddErrors・FinishResult・FinishErrors・ListOrdered と、Show の定義）
+//   - 実装の結果（エラーコード、タスク、イベント、一覧、詳細）が手本と同じ（AppliedLikeModel・FoundObserved・IdTakenObserved のもとでの
+//     ImplAddMatchesModel・ImplFinishMatchesModel・ImplShowMatchesModel、AddResult・FinishTaskResult・ListOrdered）
 //   - 実装から読み出した状態で不変条件が成り立つ（Valid。AddPreservesValid・FinishPreservesValid）
 //   - 終わったタスクは変わらない（FinishedTasksNeverChange）
 //   - イベントは追記だけ（EventsAppendOnly）
@@ -55,6 +56,7 @@ func (g *stepIDs) next() (string, error) {
 	return id, nil
 }
 
+// 守る: applied-like-model, found-observed, id-taken-observed, stored-state-valid, add-result, finish-task-result, finished-unchanged-by-add, tasks-never-disappear-add, events-append-only-add, events-append-only-finish, list-only-visible, list-all-visible, list-no-duplicates, list-order-by-created, show-result, unique-ids
 func Test無作為な操作の列で実装は仕様の手本と同じ結果になり仕様の性質が成り立つ(t *testing.T) {
 	seen := map[string]int{}
 	for seed := uint64(1); seed <= propRuns; seed++ {
