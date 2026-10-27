@@ -225,9 +225,11 @@ def render(subjects, claims, spec_marks, test_evidence):
         by_subject.setdefault(first, []).append(c)
         for x in rest:
             linked.setdefault(x, []).append(c)
-    out += ["## 一覧", "", "| 対象 | 定義 | 主張の数 |", "|---|---|---|"]
+    out += ["## 一覧", "", "| 対象 | 定義 | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|"]
     for s in subjects:
-        out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} | {len(by_subject.get(s['id'], [])) + len(linked.get(s['id'], []))} |")
+        related = by_subject.get(s["id"], []) + linked.get(s["id"], [])
+        formal = [c for c in related if spec_marks.get(("claim", c["id"]))]
+        out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} | {len(related)} | {len(formal)} |")
     out.append("")
     names = {s.get("id"): s.get("name") for s in subjects}
     unsupported = []
@@ -248,7 +250,10 @@ def render(subjects, claims, spec_marks, test_evidence):
             if c.get("condition"):
                 out += [f"- 条件: {c['condition']}"]
             places = spec_marks.get(("claim", c["id"]), [])
-            out += ["- 仕様の中の場所: " + ("、".join(f"`{f}` の `{n}`" for f, n in places) if places else "—"), ""]
+            if places:
+                out += ["- 書き方: 仕様（" + "、".join(f"`{f}` の `{n}`" for f, n in places) + "）", ""]
+            else:
+                out += ["- 書き方: 自然言語だけ（仕様に書いていない）", ""]
             stages = {st: [] for st in STAGES}
             for e in c.get("evidence", []):
                 if e.get("stage") in stages:
@@ -263,13 +268,6 @@ def render(subjects, claims, spec_marks, test_evidence):
     out += ["## 裏付けのない主張", ""]
     if unsupported:
         out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
-    else:
-        out += ["なし"]
-    out.append("")
-    informal = [c for c in claims if not spec_marks.get(("claim", c["id"]))]
-    out += ["## 仕様に書いていない主張", "", "証明していない主張。この中から、仕様に書いて証明するものを選ぶ。", ""]
-    if informal:
-        out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in informal]
     else:
         out += ["なし"]
     out.append("")

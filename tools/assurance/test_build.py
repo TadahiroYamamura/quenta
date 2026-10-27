@@ -99,7 +99,7 @@ class TestBuild(unittest.TestCase):
     def test_仕様の中の場所を印の次の宣言から集める(self):
         md = self.ok(self.base())
         self.assertIn("- 仕様の中の場所: `spec/task.dfy` の `Task`", md)
-        self.assertIn("- 仕様の中の場所: `spec/task.dfy` の `UniqueIds`", md)
+        self.assertIn("- 書き方: 仕様（`spec/task.dfy` の `UniqueIds`）", md)
 
     def test_一部である対象と一部になっている対象を互いに示す(self):
         md = self.ok(self.base())
@@ -125,11 +125,15 @@ class TestBuild(unittest.TestCase):
         self.assertIn("終わったタスクは戻らない", section)
         self.assertNotIn("タスクの ID に重複がない", section)
 
-    def test_仕様に印のない主張を一覧にする(self):
+    def test_主張ごとに仕様に書いたか自然言語だけかを示す(self):
         md = self.ok(self.base())
-        section = md.split("## 仕様に書いていない主張", 1)[1]
-        self.assertIn("終わったタスクは戻らない", section)
-        self.assertNotIn("タスクの ID に重複がない", section)
+        self.assertIn("- 書き方: 仕様（`spec/task.dfy` の `UniqueIds`）", md)
+        self.assertIn("- 書き方: 自然言語だけ（仕様に書いていない）", md)
+
+    def test_一覧に対象ごとの主張の数と仕様に書いた主張の数を出す(self):
+        md = self.ok(self.base())
+        self.assertIn("| [タスク](#task) | AI が取り組む作業の単位 | 1 | 0 |", md)
+        self.assertIn("| [タスクの ID](#task-id) | タスクを見分ける値 | 1 | 1 |", md)
 
     def test_台帳がなくても失敗せず対象がないことを示す(self):
         md = self.ok({})
