@@ -717,13 +717,13 @@ ensures = 2
 fingerprint = "sha256:73a52d78deab1574"
 harm = "なし"
 data = "なし"
-function = "細部"
+function = "主要"
 detectable = "気づけない"
 guards = ["証明"]
 proofs = ["List"]
 premises = ["tasks-observed", "stored-state-valid"]
 code = ["internal/app", "internal/store", "internal/task"]
-rationale = "同じタスクが 2 回出ることはない。実装は List を呼ぶ（Go が DB から登録した順に読んだタスクの列を渡す）。DB の状態での List についてのこの性質は、impl-list-same-result で実装の一覧に移る。ListOrdered が求める「ID が重ならない」は stored-state-valid"
+rationale = "同じタスクが 2 回出ることはない（出ると、残作業の件数を誤って見せる）。実装は List を呼ぶ（Go が DB から登録した順に読んだタスクの列を渡す）。DB の状態での List についてのこの性質は、impl-list-same-result で実装の一覧に移る。ListOrdered が求める「ID が重ならない」は stored-state-valid"
 
 [[guarantee]]
 id = "list-order-by-created"
