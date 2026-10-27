@@ -38,6 +38,7 @@ DECL_NAME = re.compile(
     r"(?:module|datatype|codatatype|newtype|type|class|trait|predicate|function|method|lemma|const|var|val|def|action|run|temporal)\s+(\w+)"
 )
 TEST_FUNC = re.compile(r"^\s*func\s+(Test\w+)\s*\(")
+GO_FUNC = re.compile(r"^\s*func\s+(?:\([^)]*\)\s*)?(\w+)")
 # E2E の台本（testscript の .txtar）の印。台本は # で注釈を書くので、Go と印の形が違う。印は台本のファイル全体に掛かる
 SCRIPT_MARKER = re.compile(r"^\s*#\s*@assurance:(\w+)\b[ \t]*(.*?)\s*$")
 LEDGER = "spec/assurance.toml"
@@ -228,7 +229,38 @@ def scan_tests(root, errors):
     return evidence
 
 
-def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors):
+def scan_checks(root, errors):
+    """本番の Go のコードの中の、実行時の確認の印を集める。返すのは {claim の id: [(ファイル, 関数の名前)]}"""
+    checks = {}
+    for path in files_under(root, lambda p: p.suffix == ".go" and not p.name.endswith("_test.go")):
+        rel = path.relative_to(root).as_posix()
+        pending = []
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            m = MARKER.match(line)
+            if m:
+                kind, arg = m.group(1), m.group(2)
+                if kind != "check":
+                    errors.add(f"{rel}:{lineno}: テストでない Go のコードの中で使える印は @assurance:check だけ（{kind!r} がある）")
+                elif not ID_PATTERN.match(arg):
+                    errors.add(f"{rel}:{lineno}: @assurance:check の後に主張の ID がない、または形が正しくない")
+                else:
+                    pending.append((arg, lineno))
+                continue
+            if not pending or not line.strip() or line.strip().startswith("//"):
+                continue
+            f = GO_FUNC.match(line)
+            for arg, ln in pending:
+                if f:
+                    checks.setdefault(arg, []).append((rel, f.group(1)))
+                else:
+                    errors.add(f"{rel}:{ln}: @assurance:check の直後が関数の宣言でない")
+            pending = []
+        for _, ln in pending:
+            errors.add(f"{rel}:{ln}: @assurance:check の後に関数の宣言がない")
+    return checks
+
+
+def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, checks, errors):
     subject_ids = {s.get("id") for s in subjects}
     claim_ids = {c.get("id") for c in claims}
     for (kind, i), places in spec_marks.items():
@@ -236,10 +268,11 @@ def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
         if i not in known:
             where = "、".join(f"{f} の {n}" for f, n in places)
             errors.add(f"@assurance:{kind} {i!r}（{where}）は台帳にない。台帳に足すか、印を直す")
-    for i, places in test_evidence.items():
-        if i not in claim_ids:
-            where = "、".join(f"{f} の {n}" for f, n in places)
-            errors.add(f"@assurance:evidence {i!r}（{where}）は台帳の主張にない")
+    for kind, marks in (("evidence", test_evidence), ("check", checks)):
+        for i, places in marks.items():
+            if i not in claim_ids:
+                where = "、".join(f"{f} の {n}" if n else f for f, n in places)
+                errors.add(f"@assurance:{kind} {i!r}（{where}）は台帳の主張にない")
     feature_ids = {s["id"] for s in subjects if s["kind"] == "feature"}
     for i, where in type_marks:
         if i in feature_ids:
@@ -311,7 +344,7 @@ def cell(entries):
     return "<br>".join(entries) if entries else "—"
 
 
-def render(subjects, claims, spec_marks, test_evidence, origins=None, issue_url=None):
+def render(subjects, claims, spec_marks, test_evidence, checks, origins=None, issue_url=None):
     out = [
         "# 用語集",
         "",
@@ -347,7 +380,7 @@ def render(subjects, claims, spec_marks, test_evidence, origins=None, issue_url=
             extra = f" {'はい' if s.get('formal') else 'いいえ'} |" if kind == "feature" else ""
             out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} |{extra} {len(related)} | {len(formal)} |")
         out.append("")
-        out += render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported, origins, issue_url)
+        out += render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, checks, unsupported, origins, issue_url)
     out += ["## 裏付けのない主張", ""]
     if unsupported:
         out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
@@ -357,7 +390,7 @@ def render(subjects, claims, spec_marks, test_evidence, origins=None, issue_url=
     return "\n".join(out)
 
 
-def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported, origins, issue_url):
+def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, checks, unsupported, origins, issue_url):
     out = []
     for s in group:
         out += [f"### {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
@@ -389,6 +422,8 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
                     stages[e["stage"]].append(f"{e['means']}: {e['detail']}")
             for f, n in test_evidence.get(c["id"], []):
                 stages["テスト"].append(f"テスト: `{n}`（`{f}`）" if n else f"E2E の台本: `{f}`")
+            for f, n in checks.get(c["id"], []):
+                stages["運用"].append(f"実行時の確認: `{n}`（`{f}`）")
             if not any(stages.values()):
                 unsupported.append(c)
             out += ["| 段階 | 裏付け |", "|---|---|"]
@@ -398,12 +433,13 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
 
 
 # 裏付けの手段ごとの、実際にあるかの確かめ方
-MARKED_MEANS = ("テスト", "オラクルとの突き合わせ", "実行時の確認")  # テストか E2E の台本の印で確かめる
+MARKED_MEANS = ("テスト", "オラクルとの突き合わせ")  # テストか E2E の台本の印で確かめる
+CHECK_MEANS = ("実行時の確認",)  # 本番のコードの中の、確認を行う関数の印で確かめる
 FILE_MEANS = ("DB の制約",)  # detail の先頭に書いたファイルを、PO が読んで確かめる
 PO_MEANS = ("人のレビュー", "監視")  # 印でもファイルでも確かめられないので、PO が確かめる
 
 
-def check_evidence(root, claim, e, spec_marks, test_evidence):
+def check_evidence(root, claim, e, spec_marks, test_evidence, checks):
     """裏付けの予定 1 つについて、(欠けているか, 表に出す説明) を返す"""
     means = e.get("means")
     if means == "証明":
@@ -416,6 +452,11 @@ def check_evidence(root, claim, e, spec_marks, test_evidence):
         if not found:
             return True, "欠け: この主張の印が付いたテスト・台本がない"
         return False, "印あり（" + "、".join(f"`{n}`" if n else f"`{f}`" for f, n in found) + "）"
+    if means in CHECK_MEANS:
+        found = checks.get(claim["id"], [])
+        if not found:
+            return True, "欠け: この主張の @assurance:check の印が付いた確認の関数がない"
+        return False, "印あり（" + "、".join(f"`{n}`" for _, n in found) + "）"
     if means in FILE_MEANS:
         path = (e.get("detail") or "").split(" ", 1)[0]
         if not path or not (root / path).is_file():
@@ -429,24 +470,25 @@ def analyze(root, errors, warnings):
     check_ids(subjects, claims, errors)
     spec_marks, type_marks = scan_specs(root, errors)
     test_evidence = scan_tests(root, errors)
-    check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
-    return subjects, claims, spec_marks, test_evidence
+    checks = scan_checks(root, errors)
+    check_marks(subjects, claims, spec_marks, type_marks, test_evidence, checks, errors)
+    return subjects, claims, spec_marks, test_evidence, checks
 
 
 def build(root, issue_url=None):
     """root の台帳・仕様・テストから、(Markdown, 決まりに反した点の一覧, 警告の一覧) を返す"""
     errors, warnings = Errors(), []
-    subjects, claims, spec_marks, test_evidence = analyze(root, errors, warnings)
+    subjects, claims, spec_marks, test_evidence, checks = analyze(root, errors, warnings)
     if errors:
         return None, list(errors), warnings
     origins = collect_origins(root, warnings)
-    return render(subjects, claims, spec_marks, test_evidence, origins, issue_url), [], warnings
+    return render(subjects, claims, spec_marks, test_evidence, checks, origins, issue_url), [], warnings
 
 
 def story_report(root, issue):
     """Issue で作った・変えた主張の、裏付けの予定と実際の突き合わせ。(Markdown, 欠けの数, 決まりに反した点, 警告) を返す"""
     errors, warnings = Errors(), []
-    subjects, claims, spec_marks, test_evidence = analyze(root, errors, warnings)
+    subjects, claims, spec_marks, test_evidence, checks = analyze(root, errors, warnings)
     if errors:
         return None, 0, list(errors), warnings
     origins = collect_origins(root, warnings)
@@ -464,7 +506,7 @@ def story_report(root, issue):
             missing += 1
             out.append(f"| {c['statement']} | — | — | — | 欠け: 裏付けの予定がない |")
         for e in planned:
-            lacking, actual = check_evidence(root, c, e, spec_marks, test_evidence)
+            lacking, actual = check_evidence(root, c, e, spec_marks, test_evidence, checks)
             missing += lacking
             out.append(f"| {c['statement']} | {e['stage']} | {e['means']} | {e['detail']} | {actual} |")
     if not targets:

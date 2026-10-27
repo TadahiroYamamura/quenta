@@ -188,6 +188,23 @@ class TestBuild(unittest.TestCase):
     def test_台帳にない主張を指す台本の印は失敗する(self):
         self.fails(self.base(**{"e2e/testdata/x.txtar": "# @assurance:evidence nope\n"}), "'nope'")
 
+    def test_本番のコードの確認の印を運用の段階の裏付けとして集める(self):
+        go = "package task\n\n// @assurance:check finished-stays\nfunc (s *Store) verifyFinish(id string) error { return nil }\n"
+        md = self.ok(self.base(**{"internal/task/verify.go": go}))
+        self.assertIn("| 運用 | 実行時の確認: `verifyFinish`（`internal/task/verify.go`） |", md)
+
+    def test_台帳にない主張を指す確認の印は失敗する(self):
+        self.fails(self.base(**{"internal/x.go": "// @assurance:check nope\nfunc f() {}\n"}), "@assurance:check 'nope'")
+
+    def test_本番のコードで確認以外の印は失敗する(self):
+        self.fails(self.base(**{"internal/x.go": "// @assurance:evidence finished-stays\nfunc f() {}\n"}), "テストでない Go のコードの中で使える印")
+
+    def test_確認の印の直後が関数でなければ失敗する(self):
+        self.fails(self.base(**{"internal/x.go": "// @assurance:check finished-stays\nvar x = 1\n"}), "直後が関数の宣言でない")
+
+    def test_確認の印の後に宣言がなければ失敗する(self):
+        self.fails(self.base(**{"internal/x.go": "// @assurance:check finished-stays\n"}), "後に関数の宣言がない")
+
     def test_gitの外では由来を示さない(self):
         md = self.ok(self.base())
         self.assertNotIn("由来", md)
@@ -419,6 +436,15 @@ class TestStoryReport(unittest.TestCase):
         md, missing, _, _ = build.story_report(root, 3)
         self.assertIn("印あり（`e2e/testdata/lacking.txtar`）", self.row(md, "裏付けが欠けた主張", "オラクルとの突き合わせ"))
         self.assertEqual(missing, 3)
+
+    def test_実行時の確認はテストの印ではなく確認の関数の印で確かめる(self):
+        ledger = STORY_LEDGER + '\n[[claim.evidence]]\nstage = "運用"\nmeans = "実行時の確認"\ndetail = "コミット前にメモリ上で事後条件を確かめる"\n'
+        root = self.repo(extra={"spec/assurance.toml": ledger, "e2e/testdata/l.txtar": "# @assurance:evidence planned-lacking\n"})
+        md, _, _, _ = build.story_report(root, 3)
+        self.assertIn("欠け: この主張の @assurance:check の印が付いた確認の関数がない", self.row(md, "裏付けが欠けた主張", "実行時の確認"))
+        root = self.repo(extra={"spec/assurance.toml": ledger, "internal/task/verify.go": "// @assurance:check planned-lacking\nfunc verifyAdd() error { return nil }\n"})
+        md, _, _, _ = build.story_report(root, 3)
+        self.assertIn("印あり（`verifyAdd`）", self.row(md, "裏付けが欠けた主張", "実行時の確認"))
 
     def test_ほかのIssueの主張は含めない(self):
         md, missing, errors, _ = build.story_report(self.repo(), 4)
