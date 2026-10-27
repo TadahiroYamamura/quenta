@@ -116,6 +116,12 @@ class TestBuild(unittest.TestCase):
         self.assertIn("終わったタスクは戻らない", section)
         self.assertNotIn("タスクの ID に重複がない", section)
 
+    def test_仕様に印のない主張を一覧にする(self):
+        md = self.ok(self.base())
+        section = md.split("## 仕様に書いていない主張", 1)[1]
+        self.assertIn("終わったタスクは戻らない", section)
+        self.assertNotIn("タスクの ID に重複がない", section)
+
     def test_台帳がなくても失敗せず対象がないことを示す(self):
         md = self.ok({})
         self.assertIn("台帳に、対象がまだない。", md)

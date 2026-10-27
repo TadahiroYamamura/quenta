@@ -254,6 +254,13 @@ def render(subjects, claims, spec_marks, test_evidence):
     else:
         out += ["なし"]
     out.append("")
+    informal = [c for c in claims if not spec_marks.get(("claim", c["id"]))]
+    out += ["## 仕様に書いていない主張", "", "証明していない主張。この中から、仕様に書いて証明するものを選ぶ。", ""]
+    if informal:
+        out += [f"- [{c['statement']}](#{c['id']})（{names.get(c.get('subject'), c.get('subject'))}）" for c in informal]
+    else:
+        out += ["なし"]
+    out.append("")
     return "\n".join(out)
 
 
