@@ -369,7 +369,7 @@ detail = "db/migrations/0001_init.sql の tasks.id の PRIMARY KEY"
 
 [[claim.evidence]]
 stage = "テスト"
-means = "テスト"
+means = "単体テスト"
 detail = "ID が重なったら作り直す"
 
 [[claim.evidence]]
@@ -399,7 +399,7 @@ detail = "db/migrations/0002_missing.sql の制約"
 
 [[claim.evidence]]
 stage = "テスト"
-means = "オラクルとの突き合わせ"
+means = "モデルベーステスト"
 detail = "まだない"
 """
 
@@ -426,7 +426,7 @@ class TestStoryReport(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertIn("仕様の印あり（`spec/task.dfy` の `UniqueIds`）", self.row(md, "予定がそろった主張", "証明"))
         self.assertIn("PO が `db/migrations/0001_init.sql` を読んで確かめる", self.row(md, "予定がそろった主張", "DB の制約"))
-        self.assertIn("印あり（`TestA`）", self.row(md, "予定がそろった主張", "テスト"))
+        self.assertIn("印あり（`TestA`）", self.row(md, "予定がそろった主張", "単体テスト"))
         self.assertIn("PO が確かめる", self.row(md, "予定がそろった主張", "人のレビュー"))
 
     def test_欠けた裏付けを数える(self):
@@ -436,12 +436,12 @@ class TestStoryReport(unittest.TestCase):
         self.assertIn("欠け: 裏付けの予定がない", md)
         self.assertIn("欠け: 仕様に主張の印がない", self.row(md, "裏付けが欠けた主張", "証明"))
         self.assertIn("欠け: detail の先頭のファイル `db/migrations/0002_missing.sql` がない", md)
-        self.assertIn("欠け: この主張の印が付いたテスト・台本がない", self.row(md, "裏付けが欠けた主張", "オラクルとの突き合わせ"))
+        self.assertIn("欠け: この主張の印が付いたテスト・台本がない", self.row(md, "裏付けが欠けた主張", "モデルベーステスト"))
 
     def test_E2Eの台本の印も実際の裏付けに数える(self):
         root = self.repo(extra={"e2e/testdata/lacking.txtar": "# @assurance:evidence planned-lacking\n"})
         md, missing, _, _ = build.story_report(root, 3)
-        self.assertIn("印あり（`e2e/testdata/lacking.txtar`）", self.row(md, "裏付けが欠けた主張", "オラクルとの突き合わせ"))
+        self.assertIn("印あり（`e2e/testdata/lacking.txtar`）", self.row(md, "裏付けが欠けた主張", "モデルベーステスト"))
         self.assertEqual(missing, 3)
 
     def test_実行時の確認はテストの印ではなく確認の関数の印で確かめる(self):

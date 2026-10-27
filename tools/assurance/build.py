@@ -18,7 +18,8 @@ import sys
 import tomllib
 
 STAGES = ["計画", "実装", "テスト", "リリース", "運用"]
-MEANS = ["証明", "オラクルとの突き合わせ", "DB の制約", "実行時の確認", "テスト", "監視", "人のレビュー"]
+TEST_KINDS = ["モデルベーステスト", "プロパティベーステスト", "E2E テスト", "単体テスト", "DB のインターフェースのテスト", "CLI のインターフェースのテスト", "同時実行のテスト"]
+MEANS = ["証明", *TEST_KINDS, "DB の制約", "実行時の確認", "監視", "人のレビュー"]
 ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # 対象（主張が関わるもの）は、用語と機能の 2 種類。表を分けるのは、種類ごとに書ける欄が違うため
@@ -435,7 +436,7 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
 
 
 # 裏付けの手段ごとの、実際にあるかの確かめ方
-MARKED_MEANS = ("テスト", "オラクルとの突き合わせ")  # テストか E2E の台本の印で確かめる
+MARKED_MEANS = tuple(TEST_KINDS)  # テストか E2E の台本の印で確かめる
 CHECK_MEANS = ("実行時の確認",)  # 本番のコードの中の、確認を行う関数の印で確かめる
 FILE_MEANS = ("DB の制約",)  # detail の先頭に書いたファイルを、PO が読んで確かめる
 PO_MEANS = ("人のレビュー", "監視")  # 印でもファイルでも確かめられないので、PO が確かめる
