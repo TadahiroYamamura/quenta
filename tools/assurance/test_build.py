@@ -8,20 +8,25 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import build  # noqa: E402
 
 LEDGER = """
-[[subject]]
+[[term]]
 id = "task"
 name = "タスク"
 definition = "AI が取り組む作業の単位"
 
-[[subject]]
+[[term]]
 id = "task-id"
 name = "タスクの ID"
 definition = "タスクを見分ける値"
 part_of = "task"
 
+[[feature]]
+id = "task-add"
+name = "タスクの登録"
+definition = "タスクを台帳に加える"
+
 [[claim]]
 id = "task-id-unique"
-subjects = ["task-id"]
+subjects = ["task-id", "task-add"]
 statement = "タスクの ID に重複がない"
 
 [[claim.evidence]]
@@ -87,8 +92,8 @@ class TestBuild(unittest.TestCase):
 
     def test_台帳と印から対象ごとに主張と段階ごとの裏付けを並べる(self):
         md = self.ok(self.base())
-        self.assertIn("## タスク {#task}", md)
-        self.assertIn("### タスクの ID に重複がない {#task-id-unique}", md)
+        self.assertIn("### タスク {#task}", md)
+        self.assertIn("#### タスクの ID に重複がない {#task-id-unique}", md)
         self.assertIn("| 実装 | DB の制約: tasks.id の一意の制約 |", md)
         self.assertIn("| 計画 | — |", md)
 
@@ -115,6 +120,44 @@ class TestBuild(unittest.TestCase):
     def test_subjectsが空なら失敗する(self):
         self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('subjects = ["task"]', 'subjects = []')}), "1 つ以上")
 
+    def test_用語と機能を別の節に分ける(self):
+        md = self.ok(self.base())
+        terms, features = md.split("## 用語", 1)[1].split("## 機能", 1)
+        self.assertIn("### タスク {#task}", terms)
+        self.assertNotIn("{#task-add}", terms)
+        self.assertIn("### タスクの登録 {#task-add}", features)
+
+    def test_仕様に書くと決めた機能の主張に仕様の印がなければ失敗する(self):
+        ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true')
+        ledger = ledger.replace('subjects = ["task"]', 'subjects = ["task", "task-add"]')
+        self.fails(self.base(**{"spec/assurance.toml": ledger}), "claim 'finished-stays': 機能 'task-add' は仕様に書くと決めた")
+
+    def test_仕様に書くと決めた機能の主張がすべて仕様にあれば通る(self):
+        ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true')
+        md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
+        self.assertIn("| [タスクの登録](#task-add) | タスクを台帳に加える | はい | 1 | 1 |", md)
+
+    def test_formalが真偽値でなければ失敗する(self):
+        ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = "yes"')
+        self.fails(self.base(**{"spec/assurance.toml": ledger}), "'formal' は true か false")
+
+    def test_型の宣言に機能の印を付けると失敗する(self):
+        self.fails(self.base(**{"spec/x.dfy": "// @assurance:subject task-add\ndatatype Add = Add\n"}), "機能 'task-add' の印")
+
+    def test_機能の印は操作の宣言には付けられる(self):
+        md = self.ok(self.base(**{"spec/x.dfy": "// @assurance:subject task-add\nmethod Add() {}\n"}))
+        self.assertIn("`spec/x.dfy` の `Add`", md)
+
+    def test_機能にpart_ofは書けない(self):
+        ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\npart_of = "task"')
+        self.fails(self.base(**{"spec/assurance.toml": ledger}), "'part_of'")
+
+    def test_part_ofが機能を指すと失敗する(self):
+        self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('part_of = "task"', 'part_of = "task-add"')}), "part_of 'task-add' は台帳にない用語")
+
+    def test_用語と機能でIDが重なると失敗する(self):
+        self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('id = "task-add"', 'id = "task"')}), "ID 'task'")
+
     def test_条件を示す(self):
         md = self.ok(self.base())
         self.assertIn("- 条件: 終わったタスクについて", md)
@@ -134,6 +177,7 @@ class TestBuild(unittest.TestCase):
         md = self.ok(self.base())
         self.assertIn("| [タスク](#task) | AI が取り組む作業の単位 | 1 | 0 |", md)
         self.assertIn("| [タスクの ID](#task-id) | タスクを見分ける値 | 1 | 1 |", md)
+        self.assertIn("| [タスクの登録](#task-add) | タスクを台帳に加える | いいえ | 1 | 1 |", md)
 
     def test_台帳がなくても失敗せず対象がないことを示す(self):
         md = self.ok({})

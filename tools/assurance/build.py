@@ -15,7 +15,12 @@ STAGES = ["計画", "実装", "テスト", "リリース", "運用"]
 MEANS = ["証明", "オラクルとの突き合わせ", "DB の制約", "実行時の確認", "テスト", "監視", "人のレビュー"]
 ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
-SUBJECT_KEYS = {"id": True, "name": True, "definition": True, "part_of": False}
+# 対象（主張が関わるもの）は、用語と機能の 2 種類。表を分けるのは、種類ごとに書ける欄が違うため
+KINDS = {"term": "用語", "feature": "機能"}
+SUBJECT_KEYS = {
+    "term": {"id": True, "name": True, "definition": True, "part_of": False},
+    "feature": {"id": True, "name": True, "definition": True, "formal": False},
+}
 CLAIM_KEYS = {"id": True, "subjects": True, "statement": True, "condition": False, "evidence": False}
 EVIDENCE_KEYS = {"stage": True, "means": True, "detail": True}
 
@@ -45,6 +50,7 @@ def check_keys(table, allowed, where, errors):
 
 
 def load_ledger(path, errors):
+    """台帳を読み、(対象の一覧, 主張の一覧) を返す。対象には、種類を "kind" として持たせる"""
     if not path.exists():
         return [], []
     try:
@@ -53,12 +59,17 @@ def load_ledger(path, errors):
         errors.add(f"{path.name}: TOML として読めない: {e}")
         return [], []
     for key in data:
-        if key not in ("subject", "claim"):
-            errors.add(f"{path.name}: 決まりにない表 {key!r} がある（subject と claim だけを書く）")
-    subjects = data.get("subject", [])
+        if key not in (*KINDS, "claim"):
+            errors.add(f"{path.name}: 決まりにない表 {key!r} がある（term・feature・claim だけを書く）")
+    subjects = []
+    for kind in KINDS:
+        for i, s in enumerate(data.get(kind, [])):
+            where = f"{path.name} の {i + 1} 番目の {kind}"
+            check_keys(s, SUBJECT_KEYS[kind], where, errors)
+            if "formal" in s and not isinstance(s["formal"], bool):
+                errors.add(f"{where}: 'formal' は true か false にする")
+            subjects.append({**s, "kind": kind})
     claims = data.get("claim", [])
-    for i, s in enumerate(subjects):
-        check_keys(s, SUBJECT_KEYS, f"{path.name} の {i + 1} 番目の subject", errors)
     for i, c in enumerate(claims):
         where = f"{path.name} の {i + 1} 番目の claim（{c.get('id', '?')}）"
         check_keys(c, CLAIM_KEYS, where, errors)
@@ -78,21 +89,22 @@ def load_ledger(path, errors):
 
 def check_ids(subjects, claims, errors):
     seen = {}
-    for kind, items in (("subject", subjects), ("claim", claims)):
-        for item in items:
-            i = item.get("id", "")
-            if not i:
-                continue
-            if not ID_PATTERN.match(i):
-                errors.add(f"{kind} {i!r}: ID は英小文字・数字をハイフンでつないだ形にする（例: task-id-unique）")
-            if i in seen:
-                errors.add(f"ID {i!r} が、{seen[i]} と {kind} で重なっている")
-            seen[i] = kind
+    for item in subjects + claims:
+        kind = item.get("kind", "claim")
+        i = item.get("id", "")
+        if not i:
+            continue
+        if not ID_PATTERN.match(i):
+            errors.add(f"{kind} {i!r}: ID は英小文字・数字をハイフンでつないだ形にする（例: task-id-unique）")
+        if i in seen:
+            errors.add(f"ID {i!r} が、{seen[i]} と {kind} で重なっている")
+        seen[i] = kind
     subject_ids = {s.get("id") for s in subjects}
+    term_ids = {s.get("id") for s in subjects if s["kind"] == "term"}
     for s in subjects:
         p = s.get("part_of")
-        if p and p not in subject_ids:
-            errors.add(f"subject {s.get('id')!r}: part_of {p!r} は台帳にない対象")
+        if p and p not in term_ids:
+            errors.add(f"term {s.get('id')!r}: part_of {p!r} は台帳にない用語")
     parents = {x.get("id"): x.get("part_of") for x in subjects}
     for s in subjects:
         chain, cur = [], s.get("id")
@@ -101,7 +113,7 @@ def check_ids(subjects, claims, errors):
             if not cur:
                 break
             if cur in chain:
-                errors.add(f"subject {s.get('id')!r}: part_of が循環している（{' → '.join(chain + [cur])}）")
+                errors.add(f"term {s.get('id')!r}: part_of が循環している（{' → '.join(chain + [cur])}）")
                 break
             chain.append(cur)
             cur = parents.get(cur)
@@ -121,8 +133,8 @@ def files_under(root, predicate):
 
 
 def scan_specs(root, errors):
-    """仕様の中の印を集める。返すのは {(kind, id): [(ファイル, 宣言の名前)]}"""
-    marks = {}
+    """仕様の中の印を集める。返すのは ({(kind, id): [(ファイル, 宣言の名前)]}, 型の宣言に付いた subject の印の [(id, 場所)])"""
+    marks, type_marks = {}, []
     for path in files_under(root, lambda p: p.suffix in SPEC_SUFFIXES):
         rel = path.relative_to(root).as_posix()
         pending = []  # 宣言を待っている印
@@ -152,10 +164,12 @@ def scan_specs(root, errors):
             for kind, arg, _ in pending:
                 if kind in ("subject", "claim"):
                     marks.setdefault((kind, arg), []).append((rel, name))
+                if kind == "subject" and type_decl:
+                    type_marks.append((arg, f"{rel}:{lineno}"))
             pending = []
         for kind, _, lineno in pending:
             errors.add(f"{rel}:{lineno}: @assurance:{kind} の後に宣言がない")
-    return marks
+    return marks, type_marks
 
 
 def scan_tests(root, errors):
@@ -189,7 +203,7 @@ def scan_tests(root, errors):
     return evidence
 
 
-def check_marks(subjects, claims, spec_marks, test_evidence, errors):
+def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors):
     subject_ids = {s.get("id") for s in subjects}
     claim_ids = {c.get("id") for c in claims}
     for (kind, i), places in spec_marks.items():
@@ -201,6 +215,15 @@ def check_marks(subjects, claims, spec_marks, test_evidence, errors):
         if i not in claim_ids:
             where = "、".join(f"{f} の {n}" for f, n in places)
             errors.add(f"@assurance:evidence {i!r}（{where}）は台帳の主張にない")
+    feature_ids = {s["id"] for s in subjects if s["kind"] == "feature"}
+    for i, where in type_marks:
+        if i in feature_ids:
+            errors.add(f"{where}: 型の宣言に、機能 {i!r} の印が付いている。型には用語の印を付ける")
+    formal = {s["id"] for s in subjects if s["kind"] == "feature" and s.get("formal")}
+    for c in claims:
+        for x in c.get("subjects", []):
+            if x in formal and not spec_marks.get(("claim", c.get("id"))):
+                errors.add(f"claim {c.get('id')!r}: 機能 {x!r} は仕様に書くと決めたが、この主張に仕様の印がない")
 
 
 def cell(entries):
@@ -212,7 +235,7 @@ def render(subjects, claims, spec_marks, test_evidence):
         "# 用語集",
         "",
         "保証の台帳（`spec/assurance.toml`）と、仕様・テストの中の印から、`make assurance` が作る頁。手で直さない。",
-        "対象（用語）ごとに、主張（成り立つと主張すること）と、それを裏付けるものを、開発の段階ごとに並べる。裏付けのない段階は「—」。",
+        "対象（用語と機能）ごとに、主張（成り立つと主張すること）と、それを裏付けるものを、開発の段階ごとに並べる。裏付けのない段階は「—」。",
         "",
     ]
     if not subjects:
@@ -225,16 +248,38 @@ def render(subjects, claims, spec_marks, test_evidence):
         by_subject.setdefault(first, []).append(c)
         for x in rest:
             linked.setdefault(x, []).append(c)
-    out += ["## 一覧", "", "| 対象 | 定義 | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|"]
-    for s in subjects:
-        related = by_subject.get(s["id"], []) + linked.get(s["id"], [])
-        formal = [c for c in related if spec_marks.get(("claim", c["id"]))]
-        out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} | {len(related)} | {len(formal)} |")
-    out.append("")
     names = {s.get("id"): s.get("name") for s in subjects}
     unsupported = []
-    for s in subjects:
-        out += [f"## {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
+    for kind, label in KINDS.items():
+        group = [s for s in subjects if s["kind"] == kind]
+        out += [f"## {label}", ""]
+        if not group:
+            out += [f"台帳に、{label}がまだない。", ""]
+            continue
+        if kind == "feature":
+            out += [f"| {label} | 定義 | 仕様に書く | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|---|"]
+        else:
+            out += [f"| {label} | 定義 | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|"]
+        for s in group:
+            related = by_subject.get(s["id"], []) + linked.get(s["id"], [])
+            formal = [c for c in related if spec_marks.get(("claim", c["id"]))]
+            extra = f" {'はい' if s.get('formal') else 'いいえ'} |" if kind == "feature" else ""
+            out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} |{extra} {len(related)} | {len(formal)} |")
+        out.append("")
+        out += render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported)
+    out += ["## 裏付けのない主張", ""]
+    if unsupported:
+        out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
+    else:
+        out += ["なし"]
+    out.append("")
+    return "\n".join(out)
+
+
+def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported):
+    out = []
+    for s in group:
+        out += [f"### {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
         if s.get("part_of"):
             out += [f"- 一部である対象: [{names.get(s['part_of'], s['part_of'])}](#{s['part_of']})"]
         children = [x for x in subjects if x.get("part_of") == s["id"]]
@@ -246,7 +291,7 @@ def render(subjects, claims, spec_marks, test_evidence):
             out += ["- ほかの対象の頁に書いた主張: " + "、".join(f"[{c['statement']}](#{c['id']})" for c in linked[s["id"]])]
         out.append("")
         for c in by_subject.get(s["id"], []):
-            out += [f"### {c['statement']} {{#{c['id']}}}", ""]
+            out += [f"#### {c['statement']} {{#{c['id']}}}", ""]
             if c.get("condition"):
                 out += [f"- 条件: {c['condition']}"]
             places = spec_marks.get(("claim", c["id"]), [])
@@ -265,13 +310,7 @@ def render(subjects, claims, spec_marks, test_evidence):
             out += ["| 段階 | 裏付け |", "|---|---|"]
             out += [f"| {st} | {cell(stages[st])} |" for st in STAGES]
             out.append("")
-    out += ["## 裏付けのない主張", ""]
-    if unsupported:
-        out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
-    else:
-        out += ["なし"]
-    out.append("")
-    return "\n".join(out)
+    return out
 
 
 def build(root):
@@ -279,9 +318,9 @@ def build(root):
     errors = Errors()
     subjects, claims = load_ledger(root / "spec" / "assurance.toml", errors)
     check_ids(subjects, claims, errors)
-    spec_marks = scan_specs(root, errors)
+    spec_marks, type_marks = scan_specs(root, errors)
     test_evidence = scan_tests(root, errors)
-    check_marks(subjects, claims, spec_marks, test_evidence, errors)
+    check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
     if errors:
         return None, list(errors)
     return render(subjects, claims, spec_marks, test_evidence), []
