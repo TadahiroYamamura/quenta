@@ -1,13 +1,15 @@
 """保証の台帳（spec/assurance.toml）と、仕様・テストの中の印から、用語集の Markdown を作る。
 
-使い方: python3 -I tools/assurance/build.py --root <リポジトリ> --out <出力する Markdown>
+使い方: python3 -I tools/assurance/build.py --root <リポジトリ> --out <出力する Markdown> [--issue-url <Issue の URL の前半>]
 
 台帳や印が決まりに反していれば、理由を標準エラー出力に並べ、終了コード 1 で終わる。
+主張ごとの由来（どの Issue で作られ、変わったか）は、台帳の git の履歴から集める。git の外で動かしたときは出さない。
 """
 
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 import tomllib
 
@@ -21,7 +23,7 @@ SUBJECT_KEYS = {
     "term": {"id": True, "name": True, "definition": True, "part_of": False},
     "feature": {"id": True, "name": True, "definition": True, "formal": False},
 }
-CLAIM_KEYS = {"id": True, "subjects": True, "statement": True, "condition": False, "evidence": False}
+CLAIM_KEYS = {"id": True, "subjects": True, "statement": True, "rationale": False, "condition": False, "evidence": False}
 EVIDENCE_KEYS = {"stage": True, "means": True, "detail": True}
 
 MARKER = re.compile(r"^\s*//+\s*@assurance:(\w+)\b[ \t]*(.*?)\s*$")
@@ -32,6 +34,12 @@ DECL_NAME = re.compile(
     r"(?:module|datatype|codatatype|newtype|type|class|trait|predicate|function|method|lemma|const|var|val|def|action|run|temporal)\s+(\w+)"
 )
 TEST_FUNC = re.compile(r"^\s*func\s+(Test\w+)\s*\(")
+# E2E の台本（testscript の .txtar）の印。台本は # で注釈を書くので、Go と印の形が違う。印は台本のファイル全体に掛かる
+SCRIPT_MARKER = re.compile(r"^\s*#\s*@assurance:(\w+)\b[ \t]*(.*?)\s*$")
+LEDGER = "spec/assurance.toml"
+LEDGER_HEADER = re.compile(r"^\s*\[\[(term|feature|claim)\]\]")
+LEDGER_ID = re.compile(r'^\s*id\s*=\s*"([^"]*)"')
+ISSUE_REF = re.compile(r"(?<![\w/])#(\d+)\b")
 SPEC_SUFFIXES = (".dfy", ".qnt")
 
 
@@ -173,8 +181,21 @@ def scan_specs(root, errors):
 
 
 def scan_tests(root, errors):
-    """テストの中の印を集める。返すのは {claim の id: [(ファイル, テスト関数の名前)]}"""
+    """テストの中の印を集める。返すのは {claim の id: [(ファイル, テスト関数の名前。E2E の台本なら None)]}"""
     evidence = {}
+    for path in files_under(root, lambda p: p.suffix == ".txtar"):
+        rel = path.relative_to(root).as_posix()
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            m = SCRIPT_MARKER.match(line)
+            if not m:
+                continue
+            kind, arg = m.group(1), m.group(2)
+            if kind != "evidence":
+                errors.add(f"{rel}:{lineno}: E2E の台本の中で使える印は @assurance:evidence だけ（{kind!r} がある）")
+            elif not ID_PATTERN.match(arg):
+                errors.add(f"{rel}:{lineno}: @assurance:evidence の後に主張の ID がない、または形が正しくない")
+            else:
+                evidence.setdefault(arg, []).append((rel, None))
     for path in files_under(root, lambda p: p.name.endswith("_test.go")):
         rel = path.relative_to(root).as_posix()
         pending = []
@@ -226,11 +247,67 @@ def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
                 errors.add(f"claim {c.get('id')!r}: 機能 {x!r} は仕様に書くと決めたが、この主張に仕様の印がない")
 
 
+def git(root, *args):
+    """git を root で動かし、標準出力を返す。git がない、または失敗したら None"""
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8")
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def commits(log):
+    """git log --format=%x1e%h%x1f%B の出力を、[(短い ID, メッセージ)] にする（新しい順）"""
+    return [tuple(rec.split("\x1f", 1)) for rec in log.split("\x1e") if "\x1f" in rec]
+
+
+def collect_origins(root, warnings):
+    """主張ごとの由来を、台帳の git の履歴から集める。返すのは {claim の id: [(Issue の番号, 作成か)]}。
+    git の外なら None。コミットしていない主張は含まない"""
+    if git(root, "rev-parse", "--is-inside-work-tree") is None:
+        return None
+    committed = git(root, "show", f"HEAD:{LEDGER}")
+    if committed is None:
+        return {}
+    for h, message in commits(git(root, "log", "--format=%x1e%h%x1f%B", "--", LEDGER) or ""):
+        if not ISSUE_REF.search(message):
+            warnings.append(f"コミット {h}（{message.splitlines()[0] if message else ''}）は台帳を変えたが、Issue の番号（#5 など）がない")
+    # 主張ごとの行の範囲を、コミットした版の台帳から求める。作業中の台帳とは行がずれうるため
+    lines = committed.splitlines()
+    starts = [i for i, line in enumerate(lines) if LEDGER_HEADER.match(line)] + [len(lines)]
+    origins = {}
+    for start, end in zip(starts, starts[1:]):
+        if LEDGER_HEADER.match(lines[start]).group(1) != "claim":
+            continue
+        claim_id = next((m.group(1) for line in lines[start:end] if (m := LEDGER_ID.match(line))), None)
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        log = git(root, "log", "-s", "--format=%x1e%h%x1f%B", "-L", f"{start + 1},{end}:{LEDGER}")
+        found = []
+        for n, (_, message) in enumerate(reversed(commits(log or ""))):
+            for num in ISSUE_REF.findall(message):
+                if all(num != x for x, _ in found):
+                    found.append((num, n == 0))
+        origins[claim_id] = found
+    return origins
+
+
+def render_origin(claim_id, origins, issue_url):
+    if origins is None:
+        return []
+    if claim_id not in origins:
+        return ["- 由来: まだコミットしていない"]
+    if not origins[claim_id]:
+        return ["- 由来: Issue の番号のあるコミットがない"]
+    refs = [(f"[#{n}]({issue_url}{n})" if issue_url else f"#{n}") + ("（作成）" if first else "（変更）") for n, first in origins[claim_id]]
+    return ["- 由来: " + "、".join(refs)]
+
+
 def cell(entries):
     return "<br>".join(entries) if entries else "—"
 
 
-def render(subjects, claims, spec_marks, test_evidence):
+def render(subjects, claims, spec_marks, test_evidence, origins=None, issue_url=None):
     out = [
         "# 用語集",
         "",
@@ -266,7 +343,7 @@ def render(subjects, claims, spec_marks, test_evidence):
             extra = f" {'はい' if s.get('formal') else 'いいえ'} |" if kind == "feature" else ""
             out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} |{extra} {len(related)} | {len(formal)} |")
         out.append("")
-        out += render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported)
+        out += render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported, origins, issue_url)
     out += ["## 裏付けのない主張", ""]
     if unsupported:
         out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
@@ -276,7 +353,7 @@ def render(subjects, claims, spec_marks, test_evidence):
     return "\n".join(out)
 
 
-def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported):
+def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test_evidence, unsupported, origins, issue_url):
     out = []
     for s in group:
         out += [f"### {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
@@ -292,6 +369,9 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
         out.append("")
         for c in by_subject.get(s["id"], []):
             out += [f"#### {c['statement']} {{#{c['id']}}}", ""]
+            if c.get("rationale"):
+                out += [f"- 理由: {c['rationale']}"]
+            out += render_origin(c["id"], origins, issue_url)
             if c.get("condition"):
                 out += [f"- 条件: {c['condition']}"]
             places = spec_marks.get(("claim", c["id"]), [])
@@ -304,7 +384,7 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
                 if e.get("stage") in stages:
                     stages[e["stage"]].append(f"{e['means']}: {e['detail']}")
             for f, n in test_evidence.get(c["id"], []):
-                stages["テスト"].append(f"テスト: `{n}`（`{f}`）")
+                stages["テスト"].append(f"テスト: `{n}`（`{f}`）" if n else f"E2E の台本: `{f}`")
             if not any(stages.values()):
                 unsupported.append(c)
             out += ["| 段階 | 裏付け |", "|---|---|"]
@@ -313,25 +393,29 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
     return out
 
 
-def build(root):
-    """root の台帳・仕様・テストから、(Markdown, 決まりに反した点の一覧) を返す"""
-    errors = Errors()
+def build(root, issue_url=None):
+    """root の台帳・仕様・テストから、(Markdown, 決まりに反した点の一覧, 警告の一覧) を返す"""
+    errors, warnings = Errors(), []
     subjects, claims = load_ledger(root / "spec" / "assurance.toml", errors)
     check_ids(subjects, claims, errors)
     spec_marks, type_marks = scan_specs(root, errors)
     test_evidence = scan_tests(root, errors)
     check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
     if errors:
-        return None, list(errors)
-    return render(subjects, claims, spec_marks, test_evidence), []
+        return None, list(errors), warnings
+    origins = collect_origins(root, warnings)
+    return render(subjects, claims, spec_marks, test_evidence, origins, issue_url), [], warnings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=".")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--issue-url", help="Issue の番号の前に付けて、Issue へのリンクにする URL")
     args = parser.parse_args()
-    markdown, errors = build(pathlib.Path(args.root).resolve())
+    markdown, errors, warnings = build(pathlib.Path(args.root).resolve(), args.issue_url)
+    for w in warnings:
+        print(f"警告: {w}", file=sys.stderr)
     if errors:
         for e in errors:
             print(e, file=sys.stderr)

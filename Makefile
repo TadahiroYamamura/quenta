@@ -4,7 +4,7 @@ PYTHON := python3 -I
 
 # 保証の台帳と仕様・テストの印から用語集を作り、決まりに反していないかを確かめる
 assurance:
-	$(PYTHON) tools/assurance/build.py --root . --out docs/glossary.md
+	$(PYTHON) tools/assurance/build.py --root . --out docs/glossary.md --issue-url https://github.com/TadahiroYamamura/quenta/issues/
 
 assurance-test:
 	$(PYTHON) tools/assurance/test_build.py

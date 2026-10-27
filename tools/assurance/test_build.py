@@ -1,4 +1,5 @@
 import pathlib
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -71,7 +72,21 @@ def make_repo(files):
 
 
 def run(files):
-    return build.build(make_repo(files))
+    md, errors, _ = build.build(make_repo(files))
+    return md, errors
+
+
+def git(root, *args):
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+         "-c", "core.hooksPath=/dev/null", *args],
+        check=True, capture_output=True,
+    )
+
+
+def commit_all(root, message):
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", message)
 
 
 class TestBuild(unittest.TestCase):
@@ -157,6 +172,69 @@ class TestBuild(unittest.TestCase):
 
     def test_用語と機能でIDが重なると失敗する(self):
         self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('id = "task-add"', 'id = "task"')}), "ID 'task'")
+
+    def test_理由を示す(self):
+        ledger = LEDGER.replace('statement = "終わったタスクは戻らない"', 'statement = "終わったタスクは戻らない"\nrationale = "終わった記録を後から書き換えられないようにするため"')
+        md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
+        self.assertIn("- 理由: 終わった記録を後から書き換えられないようにするため", md)
+
+    def test_E2Eの台本の印をテストの段階の裏付けとして集める(self):
+        md = self.ok(self.base(**{"e2e/testdata/finished.txtar": "# @assurance:evidence finished-stays\nexec quenta list\n"}))
+        self.assertIn("| テスト | E2E の台本: `e2e/testdata/finished.txtar` |", md)
+
+    def test_E2Eの台本で証拠以外の印は失敗する(self):
+        self.fails(self.base(**{"e2e/testdata/x.txtar": "# @assurance:claim finished-stays\n"}), "E2E の台本の中で使える印")
+
+    def test_台帳にない主張を指す台本の印は失敗する(self):
+        self.fails(self.base(**{"e2e/testdata/x.txtar": "# @assurance:evidence nope\n"}), "'nope'")
+
+    def test_gitの外では由来を示さない(self):
+        md = self.ok(self.base())
+        self.assertNotIn("由来", md)
+
+    def test_由来として主張を作ったIssueと変えたIssueを示す(self):
+        root = make_repo(self.base())
+        git(root, "init", "-q")
+        commit_all(root, "(feat) タスクを足す\n\n#1 のため")
+        ledger = (root / "spec/assurance.toml").read_text(encoding="utf-8")
+        (root / "spec/assurance.toml").write_text(ledger.replace('condition = "終わったタスクについて"', 'condition = "完了したタスクについて"'), encoding="utf-8")
+        commit_all(root, "(fix) 条件を直す #5（#1 の続き）")
+        md, errors, warnings = build.build(root, "https://example.com/issues/")
+        self.assertEqual((errors, warnings), ([], []))
+        self.assertIn("- 由来: [#1](https://example.com/issues/1)（作成）、[#5](https://example.com/issues/5)（変更）\n", md)
+        self.assertIn("- 由来: [#1](https://example.com/issues/1)（作成）\n", md)
+
+    def test_後ろに主張を足しても前の主張の由来は変わらない(self):
+        root = make_repo(self.base())
+        git(root, "init", "-q")
+        commit_all(root, "#1")
+        with (root / "spec/assurance.toml").open("a", encoding="utf-8") as f:
+            f.write('\n[[claim]]\nid = "new-claim"\nsubjects = ["task"]\nstatement = "新しい主張"\n')
+        commit_all(root, "#7")
+        md, errors, _ = build.build(root)
+        self.assertEqual(errors, [])
+        self.assertIn("#### 終わったタスクは戻らない {#finished-stays}\n\n- 由来: #1（作成）\n", md)
+        self.assertIn("- 由来: #7（作成）", md)
+
+    def test_コミットしていない主張はそう示す(self):
+        root = make_repo(self.base())
+        git(root, "init", "-q")
+        commit_all(root, "#1")
+        ledger = (root / "spec/assurance.toml").read_text(encoding="utf-8")
+        (root / "spec/assurance.toml").write_text('[[claim]]\nid = "new-claim"\nsubjects = ["task"]\nstatement = "新しい主張"\n\n' + ledger, encoding="utf-8")
+        md, errors, _ = build.build(root)
+        self.assertEqual(errors, [])
+        self.assertIn("#### 新しい主張 {#new-claim}\n\n- 由来: まだコミットしていない", md)
+        self.assertIn("- 由来: #1（作成）", md)
+
+    def test_Issueの番号のない台帳のコミットは警告する(self):
+        root = make_repo(self.base())
+        git(root, "init", "-q")
+        commit_all(root, "(feat) タスクを足す")
+        md, errors, warnings = build.build(root)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("Issue の番号" in w for w in warnings), warnings)
+        self.assertIn("- 由来: Issue の番号のあるコミットがない", md)
 
     def test_条件を示す(self):
         md = self.ok(self.base())
