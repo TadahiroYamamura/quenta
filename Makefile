@@ -1,10 +1,15 @@
-.PHONY: assurance assurance-test docs docs-serve
+.PHONY: assurance assurance-test story-evidence docs docs-serve
 
 PYTHON := python3 -I
 
 # 保証の台帳と仕様・テストの印から用語集を作り、決まりに反していないかを確かめる
 assurance:
 	$(PYTHON) tools/assurance/build.py --root . --out docs/glossary.md --issue-url https://github.com/TadahiroYamamura/quenta/issues/
+
+# ストーリーの完了の判断に使う。ISSUE の Issue で作った・変えた主張について、裏付けの予定と実際を突き合わせる
+story-evidence:
+	@test -n "$(ISSUE)" || { echo "ISSUE=<Issue の番号> を指定する" >&2; exit 1; }
+	$(PYTHON) tools/assurance/build.py --root . --story $(ISSUE)
 
 assurance-test:
 	$(PYTHON) tools/assurance/test_build.py

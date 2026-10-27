@@ -1,6 +1,10 @@
 """保証の台帳（spec/assurance.toml）と、仕様・テストの中の印から、用語集の Markdown を作る。
 
 使い方: python3 -I tools/assurance/build.py --root <リポジトリ> --out <出力する Markdown> [--issue-url <Issue の URL の前半>]
+       python3 -I tools/assurance/build.py --root <リポジトリ> --story <Issue の番号>
+
+--story では、その Issue で作った・変えた主張について、台帳に書いた裏付けの予定と、実際の裏付けを突き合わせた表を標準出力に出す。
+欠けている裏付けがあれば、終了コード 1 で終わる。
 
 台帳や印が決まりに反していれば、理由を標準エラー出力に並べ、終了コード 1 で終わる。
 主張ごとの由来（どの Issue で作られ、変わったか）は、台帳の git の履歴から集める。git の外で動かしたときは出さない。
@@ -393,27 +397,102 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
     return out
 
 
-def build(root, issue_url=None):
-    """root の台帳・仕様・テストから、(Markdown, 決まりに反した点の一覧, 警告の一覧) を返す"""
-    errors, warnings = Errors(), []
-    subjects, claims = load_ledger(root / "spec" / "assurance.toml", errors)
+# 裏付けの手段ごとの、実際にあるかの確かめ方
+MARKED_MEANS = ("テスト", "オラクルとの突き合わせ", "実行時の確認")  # テストか E2E の台本の印で確かめる
+FILE_MEANS = ("DB の制約",)  # detail の先頭に書いたファイルを、PO が読んで確かめる
+PO_MEANS = ("人のレビュー", "監視")  # 印でもファイルでも確かめられないので、PO が確かめる
+
+
+def check_evidence(root, claim, e, spec_marks, test_evidence):
+    """裏付けの予定 1 つについて、(欠けているか, 表に出す説明) を返す"""
+    means = e.get("means")
+    if means == "証明":
+        places = spec_marks.get(("claim", claim["id"]), [])
+        if not places:
+            return True, "欠け: 仕様に主張の印がない"
+        return False, "仕様の印あり（" + "、".join(f"`{f}` の `{n}`" for f, n in places) + "）。証明が通るかは `make check` で確かめる"
+    if means in MARKED_MEANS:
+        found = test_evidence.get(claim["id"], [])
+        if not found:
+            return True, "欠け: この主張の印が付いたテスト・台本がない"
+        return False, "印あり（" + "、".join(f"`{n}`" if n else f"`{f}`" for f, n in found) + "）"
+    if means in FILE_MEANS:
+        path = (e.get("detail") or "").split(" ", 1)[0]
+        if not path or not (root / path).is_file():
+            return True, f"欠け: detail の先頭のファイル `{path}` がない"
+        return False, f"PO が `{path}` を読んで確かめる"
+    return False, "PO が確かめる"
+
+
+def analyze(root, errors, warnings):
+    subjects, claims = load_ledger(root / LEDGER, errors)
     check_ids(subjects, claims, errors)
     spec_marks, type_marks = scan_specs(root, errors)
     test_evidence = scan_tests(root, errors)
     check_marks(subjects, claims, spec_marks, type_marks, test_evidence, errors)
+    return subjects, claims, spec_marks, test_evidence
+
+
+def build(root, issue_url=None):
+    """root の台帳・仕様・テストから、(Markdown, 決まりに反した点の一覧, 警告の一覧) を返す"""
+    errors, warnings = Errors(), []
+    subjects, claims, spec_marks, test_evidence = analyze(root, errors, warnings)
     if errors:
         return None, list(errors), warnings
     origins = collect_origins(root, warnings)
     return render(subjects, claims, spec_marks, test_evidence, origins, issue_url), [], warnings
 
 
+def story_report(root, issue):
+    """Issue で作った・変えた主張の、裏付けの予定と実際の突き合わせ。(Markdown, 欠けの数, 決まりに反した点, 警告) を返す"""
+    errors, warnings = Errors(), []
+    subjects, claims, spec_marks, test_evidence = analyze(root, errors, warnings)
+    if errors:
+        return None, 0, list(errors), warnings
+    origins = collect_origins(root, warnings)
+    if origins is None:
+        return None, 0, ["git の外では、Issue で作った・変えた主張を見分けられない"], warnings
+    pending = [c["id"] for c in claims if c["id"] not in origins]
+    if pending:
+        warnings.append("コミットしていない主張は、表に含めていない: " + "、".join(pending))
+    targets = [c for c in claims if any(n == str(issue) for n, _ in origins.get(c["id"], []))]
+    out = [f"# #{issue} の主張の裏付け", "", "| 主張 | 段階 | 手段 | 予定 | 実際 |", "|---|---|---|---|---|"]
+    missing = 0
+    for c in targets:
+        planned = c.get("evidence", [])
+        if not planned:
+            missing += 1
+            out.append(f"| {c['statement']} | — | — | — | 欠け: 裏付けの予定がない |")
+        for e in planned:
+            lacking, actual = check_evidence(root, c, e, spec_marks, test_evidence)
+            missing += lacking
+            out.append(f"| {c['statement']} | {e['stage']} | {e['means']} | {e['detail']} | {actual} |")
+    if not targets:
+        out = [f"# #{issue} の主張の裏付け", "", f"#{issue} で作った・変えた主張がない。"]
+    out.append("")
+    return "\n".join(out), missing, [], warnings
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=".")
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out")
     parser.add_argument("--issue-url", help="Issue の番号の前に付けて、Issue へのリンクにする URL")
+    parser.add_argument("--story", type=int, help="この Issue の主張の裏付けを突き合わせる")
     args = parser.parse_args()
-    markdown, errors, warnings = build(pathlib.Path(args.root).resolve(), args.issue_url)
+    root = pathlib.Path(args.root).resolve()
+    if args.story is not None:
+        report, missing, errors, warnings = story_report(root, args.story)
+        for w in warnings:
+            print(f"警告: {w}", file=sys.stderr)
+        for e in errors:
+            print(e, file=sys.stderr)
+        if report:
+            print(report)
+        return 1 if errors or missing else 0
+    if not args.out:
+        parser.error("--out か --story を指定する")
+    markdown, errors, warnings = build(root, args.issue_url)
     for w in warnings:
         print(f"警告: {w}", file=sys.stderr)
     if errors:

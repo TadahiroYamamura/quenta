@@ -322,5 +322,122 @@ class TestBuild(unittest.TestCase):
         self.fails(self.base(**{"spec/assurance.toml": "[[subject]\n"}), "TOML として読めない")
 
 
+STORY_LEDGER = """
+[[term]]
+id = "task"
+name = "タスク"
+definition = "AI が取り組む作業の単位"
+
+[[claim]]
+id = "planned-all"
+subjects = ["task"]
+statement = "予定がそろった主張"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "UniqueIds"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0001_init.sql の tasks.id の PRIMARY KEY"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "テスト"
+detail = "ID が重なったら作り直す"
+
+[[claim.evidence]]
+stage = "リリース"
+means = "人のレビュー"
+detail = "リリースの前に PO が確かめる"
+
+[[claim]]
+id = "planned-none"
+subjects = ["task"]
+statement = "裏付けの予定がない主張"
+
+[[claim]]
+id = "planned-lacking"
+subjects = ["task"]
+statement = "裏付けが欠けた主張"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "まだない"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0002_missing.sql の制約"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "オラクルとの突き合わせ"
+detail = "まだない"
+"""
+
+
+class TestStoryReport(unittest.TestCase):
+    def repo(self, message="(feat) 主張を足す #3", extra=None):
+        files = {
+            "spec/assurance.toml": STORY_LEDGER,
+            "spec/task.dfy": "// @assurance:claim planned-all\npredicate UniqueIds() { true }\n",
+            "internal/store/store_test.go": "// @assurance:evidence planned-all\nfunc TestA(t *testing.T) {}\n",
+            "db/migrations/0001_init.sql": "CREATE TABLE tasks (id TEXT PRIMARY KEY);\n",
+        }
+        files.update(extra or {})
+        root = make_repo(files)
+        git(root, "init", "-q")
+        commit_all(root, message)
+        return root
+
+    def row(self, md, statement, means):
+        return next(line for line in md.splitlines() if line.startswith(f"| {statement} |") and f"| {means} |" in line)
+
+    def test_予定どおりの裏付けは手段ごとの確かめ方を示す(self):
+        md, _, errors, _ = build.story_report(self.repo(), 3)
+        self.assertEqual(errors, [])
+        self.assertIn("仕様の印あり（`spec/task.dfy` の `UniqueIds`）", self.row(md, "予定がそろった主張", "証明"))
+        self.assertIn("PO が `db/migrations/0001_init.sql` を読んで確かめる", self.row(md, "予定がそろった主張", "DB の制約"))
+        self.assertIn("印あり（`TestA`）", self.row(md, "予定がそろった主張", "テスト"))
+        self.assertIn("PO が確かめる", self.row(md, "予定がそろった主張", "人のレビュー"))
+
+    def test_欠けた裏付けを数える(self):
+        md, missing, errors, _ = build.story_report(self.repo(), 3)
+        self.assertEqual(errors, [])
+        self.assertEqual(missing, 4)
+        self.assertIn("欠け: 裏付けの予定がない", md)
+        self.assertIn("欠け: 仕様に主張の印がない", self.row(md, "裏付けが欠けた主張", "証明"))
+        self.assertIn("欠け: detail の先頭のファイル `db/migrations/0002_missing.sql` がない", md)
+        self.assertIn("欠け: この主張の印が付いたテスト・台本がない", self.row(md, "裏付けが欠けた主張", "オラクルとの突き合わせ"))
+
+    def test_E2Eの台本の印も実際の裏付けに数える(self):
+        root = self.repo(extra={"e2e/testdata/lacking.txtar": "# @assurance:evidence planned-lacking\n"})
+        md, missing, _, _ = build.story_report(root, 3)
+        self.assertIn("印あり（`e2e/testdata/lacking.txtar`）", self.row(md, "裏付けが欠けた主張", "オラクルとの突き合わせ"))
+        self.assertEqual(missing, 3)
+
+    def test_ほかのIssueの主張は含めない(self):
+        md, missing, errors, _ = build.story_report(self.repo(), 4)
+        self.assertEqual((missing, errors), (0, []))
+        self.assertIn("#4 で作った・変えた主張がない。", md)
+
+    def test_gitの外では失敗する(self):
+        md, _, errors, _ = build.story_report(make_repo({"spec/assurance.toml": STORY_LEDGER}), 3)
+        self.assertIsNone(md)
+        self.assertTrue(any("git の外" in e for e in errors), errors)
+
+    def test_コミットしていない主張は含めずに警告する(self):
+        root = self.repo()
+        ledger = (root / "spec/assurance.toml").read_text(encoding="utf-8")
+        (root / "spec/assurance.toml").write_text(ledger + '\n[[claim]]\nid = "new-claim"\nsubjects = ["task"]\nstatement = "新しい主張"\n', encoding="utf-8")
+        md, _, _, warnings = build.story_report(root, 3)
+        self.assertNotIn("新しい主張", md)
+        self.assertTrue(any("new-claim" in w for w in warnings), warnings)
+
+
 if __name__ == "__main__":
     unittest.main()
