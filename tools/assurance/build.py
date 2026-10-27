@@ -25,7 +25,7 @@ ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 KINDS = {"term": "用語", "feature": "機能"}
 SUBJECT_KEYS = {
     "term": {"id": True, "name": True, "definition": True, "part_of": False},
-    "feature": {"id": True, "name": True, "definition": True, "formal": False},
+    "feature": {"id": True, "name": True, "definition": True, "formal": False, "rationale": False},
 }
 CLAIM_KEYS = {"id": True, "subjects": True, "statement": True, "rationale": False, "condition": False, "evidence": False}
 EVIDENCE_KEYS = {"stage": True, "means": True, "detail": True}
@@ -394,6 +394,8 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
     out = []
     for s in group:
         out += [f"### {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
+        if s.get("rationale"):
+            out += [f"- 仕様に書くと決めた理由: {s['rationale']}" if s.get("formal") else f"- 仕様に書かないと決めた理由: {s['rationale']}"]
         if s.get("part_of"):
             out += [f"- 一部である対象: [{names.get(s['part_of'], s['part_of'])}](#{s['part_of']})"]
         children = [x for x in subjects if x.get("part_of") == s["id"]]

@@ -152,6 +152,13 @@ class TestBuild(unittest.TestCase):
         md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
         self.assertIn("| [タスクの登録](#task-add) | タスクを台帳に加える | はい | 1 | 1 |", md)
 
+    def test_機能に仕様に書くかの判断の理由を示す(self):
+        ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true\nrationale = "登録が誤ると AI の作業が重なる"')
+        md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
+        self.assertIn("- 仕様に書くと決めた理由: 登録が誤ると AI の作業が重なる", md)
+        md = self.ok(self.base(**{"spec/assurance.toml": ledger.replace("formal = true", "formal = false")}))
+        self.assertIn("- 仕様に書かないと決めた理由: 登録が誤ると AI の作業が重なる", md)
+
     def test_formalが真偽値でなければ失敗する(self):
         ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = "yes"')
         self.fails(self.base(**{"spec/assurance.toml": ledger}), "'formal' は true か false")
