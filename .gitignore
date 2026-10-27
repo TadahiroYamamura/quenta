@@ -2,3 +2,5 @@
 /docs/glossary.md
 # make docs が生成する
 /site/
+# Python が tools/ の下に作るキャッシュ
+__pycache__/
