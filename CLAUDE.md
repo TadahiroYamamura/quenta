@@ -290,7 +290,7 @@ part_of = "task"          # 省いてよい
 
 [[claim]]
 id = "task-id-unique"
-subject = "task-id"
+subjects = ["task-id"]     # 関わる対象をすべて並べる。主張は最初の対象の頁に載り、ほかの対象の頁からリンクされる
 statement = "タスクの ID に重複がない"
 condition = "..."         # 省いてよい
 

@@ -16,7 +16,7 @@ MEANS = ["証明", "オラクルとの突き合わせ", "DB の制約", "実行�
 ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 SUBJECT_KEYS = {"id": True, "name": True, "definition": True, "part_of": False}
-CLAIM_KEYS = {"id": True, "subject": True, "statement": True, "condition": False, "evidence": False}
+CLAIM_KEYS = {"id": True, "subjects": True, "statement": True, "condition": False, "evidence": False}
 EVIDENCE_KEYS = {"stage": True, "means": True, "detail": True}
 
 MARKER = re.compile(r"^\s*//+\s*@assurance:(\w+)\b[ \t]*(.*?)\s*$")
@@ -62,6 +62,10 @@ def load_ledger(path, errors):
     for i, c in enumerate(claims):
         where = f"{path.name} の {i + 1} 番目の claim（{c.get('id', '?')}）"
         check_keys(c, CLAIM_KEYS, where, errors)
+        subs = c.get("subjects")
+        if subs is not None and (not isinstance(subs, list) or not subs or not all(isinstance(x, str) for x in subs)):
+            errors.add(f"{where}: 'subjects' は対象の ID を 1 つ以上並べた配列にする")
+            c["subjects"] = []
         for j, e in enumerate(c.get("evidence", [])):
             ew = f"{where} の {j + 1} 番目の evidence"
             check_keys(e, EVIDENCE_KEYS, ew, errors)
@@ -102,8 +106,9 @@ def check_ids(subjects, claims, errors):
             chain.append(cur)
             cur = parents.get(cur)
     for c in claims:
-        if c.get("subject") and c["subject"] not in subject_ids:
-            errors.add(f"claim {c.get('id')!r}: subject {c['subject']!r} は台帳にない対象")
+        for x in c.get("subjects", []):
+            if x not in subject_ids:
+                errors.add(f"claim {c.get('id')!r}: subjects の {x!r} は台帳にない対象")
 
 
 def files_under(root, predicate):
@@ -213,12 +218,16 @@ def render(subjects, claims, spec_marks, test_evidence):
     if not subjects:
         out += ["台帳に、対象がまだない。", ""]
         return "\n".join(out)
-    by_subject = {}
+    # 主張の本文は最初の対象の頁にだけ書き、ほかの対象の頁からはリンクする（頁の中のアンカーを重ねないため）
+    by_subject, linked = {}, {}
     for c in claims:
-        by_subject.setdefault(c.get("subject"), []).append(c)
+        first, *rest = c["subjects"]
+        by_subject.setdefault(first, []).append(c)
+        for x in rest:
+            linked.setdefault(x, []).append(c)
     out += ["## 一覧", "", "| 対象 | 定義 | 主張の数 |", "|---|---|---|"]
     for s in subjects:
-        out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} | {len(by_subject.get(s['id'], []))} |")
+        out.append(f"| [{s['name']}](#{s['id']}) | {s['definition']} | {len(by_subject.get(s['id'], [])) + len(linked.get(s['id'], []))} |")
     out.append("")
     names = {s.get("id"): s.get("name") for s in subjects}
     unsupported = []
@@ -230,7 +239,10 @@ def render(subjects, claims, spec_marks, test_evidence):
         if children:
             out += ["- 一部になっている対象: " + "、".join(f"[{x['name']}](#{x['id']})" for x in children)]
         places = spec_marks.get(("subject", s["id"]), [])
-        out += ["- 仕様の中の場所: " + ("、".join(f"`{f}` の `{n}`" for f, n in places) if places else "—"), ""]
+        out += ["- 仕様の中の場所: " + ("、".join(f"`{f}` の `{n}`" for f, n in places) if places else "—")]
+        if s["id"] in linked:
+            out += ["- ほかの対象の頁に書いた主張: " + "、".join(f"[{c['statement']}](#{c['id']})" for c in linked[s["id"]])]
+        out.append("")
         for c in by_subject.get(s["id"], []):
             out += [f"### {c['statement']} {{#{c['id']}}}", ""]
             if c.get("condition"):
@@ -250,14 +262,14 @@ def render(subjects, claims, spec_marks, test_evidence):
             out.append("")
     out += ["## 裏付けのない主張", ""]
     if unsupported:
-        out += [f"- [{c['statement']}](#{c['id']})（{names.get(c.get('subject'), c.get('subject'))}）" for c in unsupported]
+        out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in unsupported]
     else:
         out += ["なし"]
     out.append("")
     informal = [c for c in claims if not spec_marks.get(("claim", c["id"]))]
     out += ["## 仕様に書いていない主張", "", "証明していない主張。この中から、仕様に書いて証明するものを選ぶ。", ""]
     if informal:
-        out += [f"- [{c['statement']}](#{c['id']})（{names.get(c.get('subject'), c.get('subject'))}）" for c in informal]
+        out += [f"- [{c['statement']}](#{c['id']})（{'、'.join(names.get(x, x) for x in c['subjects'])}）" for c in informal]
     else:
         out += ["なし"]
     out.append("")

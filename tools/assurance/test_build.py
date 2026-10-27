@@ -21,7 +21,7 @@ part_of = "task"
 
 [[claim]]
 id = "task-id-unique"
-subject = "task-id"
+subjects = ["task-id"]
 statement = "タスクの ID に重複がない"
 
 [[claim.evidence]]
@@ -31,7 +31,7 @@ detail = "tasks.id の一意の制約"
 
 [[claim]]
 id = "finished-stays"
-subject = "task"
+subjects = ["task"]
 statement = "終わったタスクは戻らない"
 condition = "終わったタスクについて"
 """
@@ -106,6 +106,15 @@ class TestBuild(unittest.TestCase):
         self.assertIn("- 一部である対象: [タスク](#task)", md)
         self.assertIn("- 一部になっている対象: [タスクの ID](#task-id)", md)
 
+    def test_複数の対象に関わる主張はほかの対象の頁からもリンクする(self):
+        md = self.ok(self.base(**{"spec/assurance.toml": LEDGER.replace('subjects = ["task"]', 'subjects = ["task", "task-id"]')}))
+        self.assertIn("- ほかの対象の頁に書いた主張: [終わったタスクは戻らない](#finished-stays)", md)
+        self.assertEqual(md.count("{#finished-stays}"), 1)
+        self.assertIn("（タスク、タスクの ID）", md)
+
+    def test_subjectsが空なら失敗する(self):
+        self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('subjects = ["task"]', 'subjects = []')}), "1 つ以上")
+
     def test_条件を示す(self):
         md = self.ok(self.base())
         self.assertIn("- 条件: 終わったタスクについて", md)
@@ -158,7 +167,7 @@ class TestBuild(unittest.TestCase):
         self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('statement = "終わったタスクは戻らない"', "")}), "'statement' がない")
 
     def test_台帳にない対象を指す主張は失敗する(self):
-        self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('subject = "task"\nstatement', 'subject = "nope"\nstatement')}), "subject 'nope'")
+        self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('subjects = ["task"]', 'subjects = ["task", "nope"]')}), "subjects の 'nope'")
 
     def test_台帳にない対象を指すpart_ofは失敗する(self):
         self.fails(self.base(**{"spec/assurance.toml": LEDGER.replace('part_of = "task"', 'part_of = "nope"')}), "part_of 'nope'")
