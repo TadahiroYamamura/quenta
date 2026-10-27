@@ -1,8 +1,9 @@
 // タスクの状態と操作（#1）
 //
-// 実装（Go）が呼ぶ関数: NewTask、Finish、ShowTask、List、IsVisible、ValidTask、ErrorCode。IsBlank はテストから呼ぶ（実装では NewTask・Finish の中で使う）。
+// 実装（Go）が呼ぶ関数: NewTask、Finish、ShowTask、List、ValidTask、ErrorCode。IsBlank はテストから呼ぶ（実装では NewTask・Finish の中で使う）。IsVisible は List の中で使う。
 // 全体の状態（State）の関数（Empty、Add、FinishTask、Show、Valid）は手本で、実装は同じことを DB で行う。テストで実装と突き合わせるためだけに呼ぶ。
 // List だけは実装も呼ぶ。Go が DB から登録した順に読んだタスクの列を、イベントを空にした状態に入れて渡す（ImplListMatchesModel）。
+// 読んだ列が DB と一致することは証明ではなく、前提（TasksObserved）。
 // 性質ごとの守り方（保証の対応表）は spec/guarantees.toml にある。
 // ID と現在時刻、DB で調べた事実（ID が使われているか、ID のタスク）は、仕様の外（Go）で用意し、引数で受け取る。
 module Quenta {
@@ -350,8 +351,11 @@ module Quenta {
   {
   }
 
-  // 実装の一覧。Go が渡したタスクの列が DB と一致すれば（TasksObserved）、それをイベントを空にした状態に入れて呼んだ List の結果は、
-  // DB の状態での List と同じ（List はタスクの列しか見ないため）。ListOrdered の性質は、これで実装の一覧に移る
+  // 実装の一覧。List は全体の状態（タスクの列とイベントの列）を受け取るが、実装は一覧のためにイベントを読まず、
+  // DB から読んだタスクの列に、空のイベントの列を組み合わせた状態を渡す。この補題は、その状態で呼んだ List の結果が、
+  // DB の本当の状態で呼んだ List の結果と同じことを言う。前提は、Go が読んだタスクの列が DB と一致すること（TasksObserved）。
+  // ListOrdered は、ID が重ならない DB の本当の状態での List についての性質なので、ID が重ならなければ、これで実装の一覧の性質になる。
+  // イベントのないタスクを扱う補題ではない（イベントの列を空にするのは、List が使わない入力を埋めるため）
   lemma ImplListMatchesModel(st: State, tasks: seq<Task>, includeFinished: bool)
     requires TasksObserved(st, tasks)
     ensures List(State(tasks, []), includeFinished) == List(st, includeFinished)
@@ -392,7 +396,7 @@ module Quenta {
     Untag(Sort(picked))
   }
 
-  // ---------- 一覧の並べ方 ----------
+  // ---------- 一覧の並べ方（List の中で使う。実装も通る） ----------
   // 登録した順の位置を添えて並べ、作成日時と位置の組で比べる
 
   function Pick(tasks: seq<Task>, includeFinished: bool, from: nat): seq<(nat, Task)>
@@ -510,7 +514,8 @@ module Quenta {
 
   // ---------- 全体の状態の性質 ----------
 
-  // 空の状態は不変条件を満たす（帰納法の出発点）
+  // 空の状態は不変条件を満たす（帰納法の出発点）。実装では、新しく作った DB が空（Empty）であることを前提にする。
+  // それは証明ではなく、人のレビューとテストで守る（保証の対応表の empty-is-valid）
   lemma EmptyIsValid()
     ensures Valid(Empty)
   {
