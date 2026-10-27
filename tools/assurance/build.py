@@ -278,11 +278,6 @@ def check_marks(subjects, claims, spec_marks, type_marks, test_evidence, checks,
     for i, where in type_marks:
         if i in feature_ids:
             errors.add(f"{where}: 型の宣言に、機能 {i!r} の印が付いている。型には用語の印を付ける")
-    formal = {s["id"] for s in subjects if s["kind"] == "feature" and s.get("formal")}
-    for c in claims:
-        for x in c.get("subjects", []):
-            if x in formal and not spec_marks.get(("claim", c.get("id"))):
-                errors.add(f"claim {c.get('id')!r}: 機能 {x!r} は仕様に書くと決めたが、この主張に仕様の印がない")
 
 
 def git(root, *args):
@@ -372,7 +367,7 @@ def render(subjects, claims, spec_marks, test_evidence, checks, origins=None, is
             out += [f"台帳に、{label}がまだない。", ""]
             continue
         if kind == "feature":
-            out += [f"| {label} | 定義 | 仕様に書く | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|---|"]
+            out += [f"| {label} | 定義 | 念入り | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|---|"]
         else:
             out += [f"| {label} | 定義 | 主張の数 | うち仕様に書いた主張の数 |", "|---|---|---|---|"]
         for s in group:
@@ -396,7 +391,7 @@ def render_subjects(group, subjects, names, by_subject, linked, spec_marks, test
     for s in group:
         out += [f"### {s['name']} {{#{s['id']}}}", "", s["definition"], ""]
         if s.get("rationale"):
-            out += [f"- 仕様に書くと決めた理由: {s['rationale']}" if s.get("formal") else f"- 仕様に書かないと決めた理由: {s['rationale']}"]
+            out += [f"- 念入りにすると決めた理由: {s['rationale']}" if s.get("formal") else f"- 念入りにしないと決めた理由: {s['rationale']}"]
         if s.get("part_of"):
             out += [f"- 一部である対象: [{names.get(s['part_of'], s['part_of'])}](#{s['part_of']})"]
         children = [x for x in subjects if x.get("part_of") == s["id"]]

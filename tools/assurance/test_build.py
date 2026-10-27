@@ -142,12 +142,13 @@ class TestBuild(unittest.TestCase):
         self.assertNotIn("{#task-add}", terms)
         self.assertIn("### タスクの登録 {#task-add}", features)
 
-    def test_仕様に書くと決めた機能の主張に仕様の印がなければ失敗する(self):
+    def test_念入りにした機能でも仕様の印のない主張を認める(self):
         ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true')
         ledger = ledger.replace('subjects = ["task"]', 'subjects = ["task", "task-add"]')
-        self.fails(self.base(**{"spec/assurance.toml": ledger}), "claim 'finished-stays': 機能 'task-add' は仕様に書くと決めた")
+        md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
+        self.assertIn("- 書き方: 自然言語だけ（仕様に書いていない）", md)
 
-    def test_仕様に書くと決めた機能の主張がすべて仕様にあれば通る(self):
+    def test_念入りにした機能を一覧に示す(self):
         ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true')
         md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
         self.assertIn("| [タスクの登録](#task-add) | タスクを台帳に加える | はい | 1 | 1 |", md)
@@ -155,9 +156,9 @@ class TestBuild(unittest.TestCase):
     def test_機能に仕様に書くかの判断の理由を示す(self):
         ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = true\nrationale = "登録が誤ると AI の作業が重なる"')
         md = self.ok(self.base(**{"spec/assurance.toml": ledger}))
-        self.assertIn("- 仕様に書くと決めた理由: 登録が誤ると AI の作業が重なる", md)
+        self.assertIn("- 念入りにすると決めた理由: 登録が誤ると AI の作業が重なる", md)
         md = self.ok(self.base(**{"spec/assurance.toml": ledger.replace("formal = true", "formal = false")}))
-        self.assertIn("- 仕様に書かないと決めた理由: 登録が誤ると AI の作業が重なる", md)
+        self.assertIn("- 念入りにしないと決めた理由: 登録が誤ると AI の作業が重なる", md)
 
     def test_formalが真偽値でなければ失敗する(self):
         ledger = LEDGER.replace('definition = "タスクを台帳に加える"', 'definition = "タスクを台帳に加える"\nformal = "yes"')
