@@ -1,0 +1,4 @@
+# make assurance が生成する（仕様とずれないよう、ビルドのたびに作る）
+/docs/glossary.md
+# make docs が生成する
+/site/

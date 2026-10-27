@@ -1,0 +1,15 @@
+site_name: quenta
+site_description: AI エージェントが使うタスク管理の CLI
+docs_dir: docs
+site_dir: site
+theme:
+  name: material
+  language: ja
+markdown_extensions:
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+nav:
+  - はじめに: index.md
+  - 用語集: glossary.md
