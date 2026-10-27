@@ -251,7 +251,7 @@ Dafny が保証するのは Dafny の中だけ。境界の外では、次の決�
 
 ## 道具
 
-- `nix develop --command <コマンド>` で実行する（Dafny、Quint、Go、goimports、sqlite3 が入る）
+- `nix develop --command <コマンド>` で実行する（Dafny、Quint、Go、goimports、sqlite3、Python、MkDocs が入る）
 - Quint を使うときは `--backend=typescript` を付ける。`quint verify` は使わない（実行時に Apalache を取得するため、版を固定できない）
 
 ### 了承済みの依存
@@ -265,6 +265,41 @@ Dafny が保証するのは Dafny の中だけ。境界の外では、次の決�
 | `github.com/spf13/cobra` | サブコマンド | サブコマンドを作るのが容易で、生成されるヘルプが読みやすい（AI もヘルプを読んで使い方を知る）。開発者が使い慣れている |
 | `cachix/install-nix-action` | GitHub Actions で Nix を入れる | 手元と同じ `flake.lock` の版の道具で `make check` を動かせる。道具ごとの setup Action だと版を flake と二重に管理することになる |
 | `github.com/go-gremlins/gremlins` | AI が書いた Go の変異テスト | Go 1.26 で動くことを確かめた。go-mutesting（avito-tech）は Go 1.27 以上を要した |
+| Python、MkDocs、Material for MkDocs | 用語集を作り、手元で HTML として見る | Python は標準ライブラリだけで台帳（TOML）を読める。MkDocs は人が文書のビルドに指定した |
+
+## 保証の台帳と用語集
+
+対象（用語）ごとに、何を成り立たせると主張し、それを開発のどの段階で何が裏付けているかを、保証の台帳（`spec/assurance.toml`）にまとめる。用語集（`docs/glossary.md`）は、台帳と仕様・テストの中の印から `make assurance` が作る。用語集は手で直さず、コミットもしない。
+
+- 台帳と印を書くのはエージェント。台帳に新しい対象を足すときは、人（プロダクトオーナー）に了承を得る。同じものに別の名前が付くのを防ぐため
+- 仕様（`.dfy`、`.qnt`）の中の型・述語・関数には、宣言の直前に印を付ける
+  - `// @assurance:subject <対象の ID>`: その宣言が表す対象
+  - `// @assurance:claim <主張の ID>`: その宣言が表す主張
+  - `// @assurance:internal <理由>`: 仕様の中だけで使う型。型の宣言には、`subject` か `internal` の印が要る
+- Go のテスト関数には、直前に `// @assurance:evidence <主張の ID>` を付ける。用語集では、その主張のテストの段階の裏付けとして並ぶ
+- 台帳の形は次のとおり。`stage` は 計画・実装・テスト・リリース・運用、`means` は 証明・オラクルとの突き合わせ・DB の制約・実行時の確認・テスト・監視・人のレビュー から選ぶ
+
+```toml
+[[subject]]
+id = "task-id"            # 英小文字・数字をハイフンでつなぐ。主張の ID とも重ならない
+name = "タスクの ID"
+definition = "タスクを見分ける値"
+part_of = "task"          # 省いてよい
+
+[[claim]]
+id = "task-id-unique"
+subject = "task-id"
+statement = "タスクの ID に重複がない"
+condition = "..."         # 省いてよい
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "tasks.id の一意の制約"
+```
+
+- `make assurance` は、台帳にない ID を指す印、印のない型、決まりにない項目や段階・守り方を、誤りとして止める
+- 人は `make docs-serve` で手元で見る。GitHub Pages などには公開しない
 
 ## テスト
 
