@@ -375,9 +375,15 @@ func Test全件の読み出しは作成日時によらず登録した順にす�
 	ctx := context.Background()
 	s, _ := openTemp(t)
 	// 登録した順と作成日時の順をずらし、同じ作成日時と、終わったタスクも混ぜる
-	want := []string{"00000001", "00000002", "00000003", "00000004", "00000005"}
-	for i, at := range []int64{30, 10, 30, 20, 10} {
-		add(t, s, want[i], "t", "", "s", at)
+	want := []task.Task{
+		{ID: "00000001", Title: "一", Body: "本文", Status: task.StatusTodo, CreatedAt: 30},
+		{ID: "00000002", Title: "二", Status: task.StatusTodo, CreatedAt: 10},
+		{ID: "00000003", Title: "三", Status: task.StatusDone, CreatedAt: 30},
+		{ID: "00000004", Title: "四", Body: "b", Status: task.StatusTodo, CreatedAt: 20},
+		{ID: "00000005", Title: "五", Status: task.StatusCanceled, CreatedAt: 10},
+	}
+	for _, w := range want {
+		add(t, s, w.ID, w.Title, w.Body, "s", w.CreatedAt)
 	}
 	for id, o := range map[string]task.Outcome{"00000003": task.OutcomeComplete, "00000005": task.OutcomeCancel} {
 		if _, err := finish(s, id, o, "r", "s", 40); err != nil {
@@ -388,8 +394,13 @@ func Test全件の読み出しは作成日時によらず登録した順にす�
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(ids(got), want) {
-		t.Errorf("got %v, want %v", ids(got), want)
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%d 番目: got %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 
