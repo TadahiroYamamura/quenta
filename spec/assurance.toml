@@ -1,0 +1,862 @@
+# 保証の台帳。書き方は CLAUDE.md の「保証の台帳と用語集」
+
+# ---- 用語 ----
+
+[[term]]
+id = "task"
+name = "タスク"
+definition = "利用者が AI に頼んだ、やること"
+
+[[term]]
+id = "task-id"
+name = "タスクの ID"
+definition = "タスクを見分ける値。16 進の小文字 8 桁のランダムな値"
+part_of = "task"
+
+[[term]]
+id = "task-title"
+name = "タイトル"
+definition = "タスクの見出し"
+part_of = "task"
+
+[[term]]
+id = "task-body"
+name = "本文"
+definition = "タスクの詳しい説明"
+part_of = "task"
+
+[[term]]
+id = "task-status"
+name = "状態"
+definition = "タスクの進み具合。todo（完了も中止もしていない）、done（完了）、canceled（中止）のどれか。todo を終わっていない状態、done と canceled を終わった状態と呼ぶ"
+part_of = "task"
+
+[[term]]
+id = "task-created-at"
+name = "作成日時"
+definition = "タスクを登録した日時"
+part_of = "task"
+
+[[term]]
+id = "event"
+name = "イベント"
+definition = "タスクの状態の変更の記録。主体、変更前の状態（登録のイベントではなし）、変更後の状態、理由、日時を持つ。1 つのタスクのイベントは、記録した順番（記録の順）を持つ"
+
+[[term]]
+id = "event-actor"
+name = "主体"
+definition = "イベントを起こした操作を行ったセッション"
+part_of = "event"
+
+[[term]]
+id = "event-reason"
+name = "理由"
+definition = "完了・中止にした理由。登録のイベントでは空"
+part_of = "event"
+
+[[term]]
+id = "session"
+name = "セッション"
+definition = "quenta を使う AI の、1 回の作業の単位。環境変数 QUENTA_SESSION の値で表す"
+
+[[term]]
+id = "blank"
+name = "空白だけ"
+definition = "文字が 1 つもないか、空白の文字だけでできていること。空白の文字は、Unicode で White_Space の性質を持つ文字（半角・全角の空白、タブ、改行など）"
+
+[[term]]
+id = "error-code"
+name = "エラーコード"
+definition = "失敗したときに JSON で返す、失敗の種類を表す文字列"
+
+[[term]]
+id = "data-file"
+name = "データのファイル"
+definition = "タスクとイベントを置く SQLite のデータベースのファイル。quenta.db という名前で、置き場所は主張「データの置き場所」（data-location）のとおり"
+
+# ---- 機能 ----
+
+[[feature]]
+id = "task-add"
+name = "タスクの登録"
+definition = "タイトルと本文を指定して、タスクを加える（quenta task add --title <タイトル> [--body <本文>]）"
+formal = true
+
+[[feature]]
+id = "task-list"
+name = "タスクの一覧"
+definition = "タスクを並べて返す（quenta task list [--all]）"
+formal = true
+rationale = "念入りにしても、モデルを作る負担はそんなに増えない"
+
+[[feature]]
+id = "task-show"
+name = "タスクの表示"
+definition = "ID を指定して、タスクの内容とイベントを返す（quenta task show <ID>）"
+
+[[feature]]
+id = "task-done"
+name = "タスクの完了"
+definition = "ID と理由を指定して、タスクを done にする（quenta task done <ID> --reason <理由>）"
+formal = true
+
+[[feature]]
+id = "task-cancel"
+name = "タスクの中止"
+definition = "ID と理由を指定して、タスクを canceled にする（quenta task cancel <ID> --reason <理由>）"
+formal = true
+
+[[feature]]
+id = "install"
+name = "インストール"
+definition = "リポジトリから quenta を入れる（make install）"
+
+# ---- 主張 ----
+# 層ごとに分ける（CLAUDE.md の「保証の台帳と用語集」）。モデルの層は、状態と操作の判定・遷移
+
+# -- モデルの層 --
+
+[[claim]]
+id = "task-add-saves-todo"
+subjects = ["task-add", "task", "task-status"]
+statement = "タイトルと本文を渡して登録すると、状態が todo のタスクが 1 つ加わる。タイトルと本文は、渡された値のまま（前後の空白を含む）。作成日時は、渡された日時"
+condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-add-empty-body"
+subjects = ["task-add", "task-body"]
+statement = "渡された本文が何であっても（空、空白だけを含む）、本文を理由に登録を拒まない。加わったタスクの本文は、渡された値のまま。渡される本文は、CLI の層で正しい UTF-8 だと確かめたもの（主張 cli-invalid-utf8）"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "空・空白だけ（半角・全角の空白、タブ、改行）・前後に空白がある・長い・多言語の文字の本文を境界として必ず含め、残りを無作為に作る。主体とタイトルは空白だけでなく ID も重ならない入力で、登録が成功し本文がそのまま入ることを、モデルの事後条件で判定する"
+
+[[claim]]
+id = "task-add-title-required"
+subjects = ["task-add", "task-title", "blank"]
+statement = "タイトルが空白だけなら、登録せず、エラー title_required を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "空白だけのタイトル（空白の文字を組み合わせたもの）で、title_required になり何も変わらないことを判定する"
+
+[[claim]]
+id = "task-add-records-event"
+subjects = ["task-add", "event"]
+statement = "登録すると、主体・変更前なし・変更後 todo・日時を持ち、理由が空のイベントが 1 件記録される。そのイベントの日時は、渡された日時（タスクの作成日時と同じ）"
+condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-id-unique"
+subjects = ["task-id", "task-add"]
+statement = "タスクの ID は重ならない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-add-id-taken"
+subjects = ["task-add", "task-id"]
+statement = "渡された ID が登録済みの ID と重なっている（渡された事実が「重なる」）なら、登録せず、ID が重なったことを返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "登録済みの ID を渡し、登録されず重なりが返ることを判定する"
+
+[[claim]]
+id = "task-list-unfinished"
+subjects = ["task-list", "task-status"]
+statement = "終わったタスクを含めないと指定された一覧は、渡されたタスクの集まりのうち、終わっていない状態のタスクを、漏れなく、それだけ、1 度ずつ返す"
+condition = "主体が空白だけでないとき（主張 session-required）"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-list-all"
+subjects = ["task-list", "task-status"]
+statement = "終わったタスクを含めると指定された一覧は、渡されたタスクの集まりを、漏れなく、それだけ、1 度ずつ返す"
+condition = "主体が空白だけでないとき（主張 session-required）"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-list-order"
+subjects = ["task-list", "task-created-at"]
+statement = "一覧は作成日時の古い順に並ぶ。作成日時が同じなら、ID の昇順（文字の順）に並ぶ"
+condition = "主体が空白だけでないとき（主張 session-required）"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "作成日時が同じタスクを含む集まりを直接作り、並びをモデルで判定する"
+
+[[claim]]
+id = "task-done-sets-done"
+subjects = ["task-done", "task-status", "event"]
+statement = "理由を渡して todo のタスクを完了にすると、状態が done になり、主体・変更前 todo・変更後 done・理由・日時のイベントが 1 件記録される。理由は、渡された値のまま（前後の空白を含む）。日時は、渡された日時"
+condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-cancel-sets-canceled"
+subjects = ["task-cancel", "task-status", "event"]
+statement = "理由を渡して todo のタスクを中止にすると、状態が canceled になり、主体・変更前 todo・変更後 canceled・理由・日時のイベントが 1 件記録される。理由は、渡された値のまま（前後の空白を含む）。日時は、渡された日時"
+condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "finish-reason-required"
+subjects = ["event-reason", "task-done", "task-cancel", "blank"]
+statement = "理由が空白だけなら、完了にも中止にもせず、エラー reason_required を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "空白だけの理由で、reason_required になり何も変わらないことを判定する"
+
+[[claim]]
+id = "finished-task-unchangeable"
+subjects = ["task-status", "task-done", "task-cancel"]
+statement = "渡されたタスクが終わった状態なら、完了にも中止にもせず、エラー already_finished を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "task-not-found"
+subjects = ["task-id", "task-done", "task-cancel"]
+statement = "指定した ID のタスクがない（渡された事実が「見つからない」）なら、完了にも中止にもせず、エラー not_found を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "session-required"
+subjects = ["session", "blank", "task-add", "task-list", "task-done", "task-cancel"]
+statement = "主体が空白だけなら、登録・一覧・完了・中止のどれも、エラー session_required を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "空白だけの主体で、どの操作も session_required になることを判定する"
+
+[[claim]]
+id = "event-actor-as-given"
+subjects = ["event-actor", "task-add", "task-done", "task-cancel"]
+statement = "イベントの主体は、その操作に渡された主体の値のまま（前後の空白を含む）"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim]]
+id = "model-changes-only-target"
+subjects = ["task-add", "task-done", "task-cancel", "task", "event"]
+statement = "登録が成功したときは、タスクを 1 つとそのイベントを 1 件加えるほかは、何も変えない。完了・中止が成功したときは、指定したタスクの状態を変え、そのタスクにイベントを 1 件足すほかは、何も変えない（そのタスクのタイトル・本文・作成日時、ほかのタスクとそのイベントを含む）。一覧は、成功しても失敗しても何も変えない。登録・完了・中止が失敗したときに何も変えないことは、それぞれのエラーの主張が言う"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送り、1 歩ごとに状態の全体を比べる"
+
+[[claim]]
+id = "model-errors-only-when"
+subjects = ["task-add", "task-list", "task-done", "task-cancel"]
+statement = "モデルがエラーを返すのは、エラーの主張（session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）に書いた条件のどれかが当てはまるときだけ"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "エラーごとの同値（<==>）の補題"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "エラーの条件の境界の入力（空白でない文字を 1 つだけ含む主体・タイトル・理由、todo のタスク、登録済みでない ID）を必ず含め、どの条件にも当てはまらない入力で操作が成功することを判定する"
+
+[[claim]]
+id = "model-error-precedence"
+subjects = ["task-add", "task-list", "task-done", "task-cancel"]
+statement = "モデルの判定するエラーの条件が複数当てはまるときは、主張 error-precedence の順のうち、モデルが判定するエラーの順に従い、先に当てはまったものを返す。モデルが判定するエラーは、already_finished・not_found・reason_required・session_required・title_required と ID の重なり（id_conflict の位置）で、この並びは順位ではない"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "プロパティベーステスト"
+detail = "複数のエラーの条件が当てはまる入力で、返るエラーをモデルと比べる"
+
+[[claim]]
+id = "status-matches-last-event"
+subjects = ["task-status", "event"]
+statement = "タスクの状態は、そのタスクの、記録の順で最後のイベントの変更後の状態と一致する"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送って比べる"
+
+[[claim.evidence]]
+stage = "運用"
+means = "実行時の確認"
+detail = "不変条件を、コミット前に、メモリから確かめる（書き込もうとしているタスクの状態と、そのタスクの最後のイベントの変更後を比べる）。保存が正しいことは主張 db-roundtrip と db-events-in-record-order を前提にする"
+
+# -- ID を作る部分（モデルの外） --
+
+[[claim]]
+id = "task-id-format"
+subjects = ["task-id"]
+statement = "登録で作るタスクの ID は、16 進の小文字 8 桁のランダムな値"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "単体テスト"
+detail = "作った ID の形を、たくさん作って確かめる"
+
+[[claim]]
+id = "task-add-retries-on-id-collision"
+subjects = ["task-add", "task-id", "error-code"]
+statement = "作った ID が登録済みの ID と重なったら、ID を作り直して登録する。作り直しても重なり続け、上限の回数に達したら、エラーコード id_conflict を返す。タスクもイベントも記録しない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "単体テスト"
+detail = "ID の作り方を差し替えて重ね、作り直しと上限の id_conflict を確かめる"
+
+# -- CLI の層 --
+
+[[claim]]
+id = "cli-body-omitted"
+subjects = ["task-add", "task-body"]
+statement = "--body を省くと（値なしで最後に置いた場合を含む）、本文は空として渡る"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "--body を省いたとき、値なしで最後に置いたとき"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-body-omitted.txtar"
+
+[[claim]]
+id = "cli-title-omitted"
+subjects = ["task-add", "task-title"]
+statement = "--title を省くと（値なしで最後に置いた場合を含む）、タイトルは空として渡り、title_required になる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "--title を省いたとき、値なしで最後に置いたとき"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-title-omitted.txtar"
+
+[[claim]]
+id = "cli-reason-omitted"
+subjects = ["task-done", "task-cancel", "event-reason"]
+statement = "--reason を省くと（値なしで最後に置いた場合を含む）、理由は空として渡り、reason_required になる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "--reason を省いたとき、値なしで最後に置いたとき"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-reason-omitted.txtar"
+
+[[claim]]
+id = "cli-list-all-flag"
+subjects = ["task-list"]
+statement = "--all を指定すると終わったタスクを含める一覧に、省くと含めない一覧になる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "--all の有無"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-list-all-flag.txtar"
+
+[[claim]]
+id = "cli-session-from-env"
+subjects = ["session", "event-actor", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "主体には、環境変数 QUENTA_SESSION の値を、前後の空白も含めてそのまま渡す。QUENTA_SESSION がなければ空として渡す。エージェント固有の環境変数は読まない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "QUENTA_SESSION の有無と、前後の空白。QUENTA_SESSION がなく CLAUDE_CODE_SESSION_ID だけがあるときも session_required になること"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-session-from-env.txtar"
+
+[[claim]]
+id = "cli-show-session-required"
+subjects = ["task-show", "session", "blank", "error-code"]
+statement = "QUENTA_SESSION がないか、値が空白だけなら、表示もエラーコード session_required を返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-show-session-required.txtar"
+
+[[claim]]
+id = "task-show-with-events"
+subjects = ["task-show", "event"]
+statement = "ID を指定して表示すると、タスクと、そのタスクのイベントを、漏れなく、それだけ、記録の順に返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "task-show-with-events.txtar"
+
+[[claim]]
+id = "cli-show-not-found"
+subjects = ["task-show", "task-id", "error-code"]
+statement = "表示で、指定した ID のタスクが見つからなければ、エラーコード not_found を返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-show-not-found.txtar"
+
+[[claim]]
+id = "cli-now"
+subjects = ["task-add", "task-done", "task-cancel", "task-created-at", "event"]
+statement = "登録・完了・中止には、その操作を行った時点の日時を、秒の細かさで渡す。JSON では、UTC の RFC 3339 の形（例: 2026-10-27T12:34:56Z）で返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "日時の渡し方と JSON の形"
+
+[[claim]]
+id = "cli-model-error-code"
+subjects = ["error-code", "task-add", "task-list", "task-done", "task-cancel"]
+statement = "モデルが返すエラーは、同じ名前のエラーコード（session_required、title_required、reason_required、not_found、already_finished）として返す。モデルが返す ID の重なりはエラーコードとして返さず、ID の作り直しに回す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "モデルのエラーの全種類を回し、エラーコードの対応を確かめる"
+
+[[claim]]
+id = "cli-input-checked-before-open"
+subjects = ["session", "task-title", "event-reason", "blank", "data-file"]
+statement = "主体・タイトル・理由が空白だけかは、データのファイルを開く前にも、モデルの判定と同じ空白の決まりで確かめる。当てはまれば、データのファイルを開かずに、そのエラーコードを返す。当てはまらないときに、データのファイルを開くかどうかは、主張 error-precedence と data-location に従う"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "White_Space の文字のすべての種類を組み合わせた空白だけの入力では、データのファイルを開かないこと。空白でない文字を 1 つでも含み、ほかのエラーの条件にも当てはまらない入力では開くこと"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-input-checked-before-open.txtar"
+
+[[claim]]
+id = "cli-invalid-utf8"
+subjects = ["task-add", "task-list", "task-show", "task-done", "task-cancel", "session", "error-code"]
+statement = "正しくない UTF-8 を含む引数（タイトル・本文・理由・ID）や QUENTA_SESSION は、エラーコード invalid_argument で拒む。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "引数ごと・QUENTA_SESSION に、正しくないバイト列（途中で切れた文字、サロゲートを表すバイト列など）を入れる"
+
+[[claim]]
+id = "cli-no-length-limit"
+subjects = ["task-add", "task-done", "task-cancel", "task-title", "task-body", "event-reason"]
+statement = "quenta は、タイトル・本文・理由を長さを理由に拒まない。渡せる長さは OS の引数の上限で決まる。上限に近い長さでも、そのまま保存され、JSON でそのまま返る"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "ビルドした quenta を起動し、その OS で 1 つの引数として渡せる最大に近い長さ（Linux は 1 つの引数の上限 128 KiB の手前、macOS は引数と環境変数の合計の上限 ARG_MAX から環境の分を引いた長さの手前）のタイトルと本文で登録し、同じ長さの理由で完了と中止をし（別々のタスクで）、表示で同じ値が返ること。E2E の台本には長い文字列を書けないので、Go のテストで行う"
+
+[[claim]]
+id = "cli-returns-changed-task"
+subjects = ["task-add", "task-done", "task-cancel"]
+statement = "登録・完了・中止に成功すると、加わった・変わったタスクを JSON で返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "登録・完了・中止の出力"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-returns-changed-task.txtar"
+
+[[claim]]
+id = "task-output-fields"
+subjects = ["task", "event", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "タスクを返すときは、どの操作でも、ID・タイトル・本文・状態・作成日時の項目を持つ。イベントを返すときは、主体・変更前・変更後・理由・日時の項目を持つ。登録のイベントの変更前は null、理由は空の文字列"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "タスクとイベントの JSON の項目"
+
+[[claim]]
+id = "invalid-argument"
+subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "ID の引数そのものがない、知らないフラグや余分な引数がある、など引数の誤りなら、エラーコード invalid_argument を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "引数の誤りの種類ごと"
+
+[[claim]]
+id = "error-precedence"
+subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "--help か -h を指定したときは、ほかの条件にかかわらず使い方のテキストを返す（主張「出力は JSON」の例外）。複数のエラーの条件が当てはまるときは、session_required、invalid_argument、title_required・reason_required、unsupported_data_version、internal_error、not_found、already_finished、id_conflict の順で、先に当てはまったものを返す。ただし、書き込みの途中で起きた internal_error は、起きた時点で返す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "複数のエラーの条件が当てはまる引数と環境"
+
+[[claim]]
+id = "output-json"
+subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "出力は JSON。失敗したときも JSON でエラーコードを返し、終了コードは 0 以外になる。ただし、--help か -h を指定したときと、quenta・quenta task をサブコマンドなしで起動したときは、使い方のテキストを返し、終了コードは 0 になる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "成功・失敗・--help の出力と終了コード"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "output-json.txtar"
+
+[[claim]]
+id = "data-location"
+subjects = ["data-file", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "データは $XDG_DATA_HOME/quenta/（XDG_DATA_HOME が未設定か、空か、絶対パスでなければ ~/.local/share/quenta/）の下にだけ作られ、カレントディレクトリには何も作られない。macOS でも同じ。XDG_DATA_HOME が使えず、HOME もない（または空の）ときは、エラーコード internal_error を返す。使い方のテキストを返すときと、session_required・invalid_argument・title_required・reason_required を返すときは、データのファイルもディレクトリも作らない。それ以外のときは、登録・一覧・表示・完了・中止のどれも、データのファイルがなければ作る"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "data-location.txtar"
+
+# -- DB の層 --
+
+[[claim]]
+id = "db-roundtrip"
+subjects = ["data-file", "task", "event"]
+statement = "タスクとイベントは、渡された値のまま保存され、読み出しても値が変わらない（タイトル・本文・理由・主体の前後の空白や、OS の引数の上限に近い長さを含む）"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "前後の空白、White_Space の文字、多言語の文字、OS の引数の上限に近い長さの値を保存して読み出す"
+
+[[claim]]
+id = "db-task-id-unique"
+subjects = ["data-file", "task-id"]
+statement = "データのファイルは、同じ ID のタスクを 2 つ持てない"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0001_create_tasks.sql の tasks の主キー"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "同じ ID の行を直接入れて拒まれること"
+
+[[claim]]
+id = "db-finished-unchangeable"
+subjects = ["data-file", "task-status"]
+statement = "データのファイルは、終わった状態のタスクの状態の書き換えを拒む"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0001_create_tasks.sql のトリガー"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "終わった行の状態を直接書き換えて拒まれること"
+
+[[claim]]
+id = "db-id-exact-match"
+subjects = ["data-file", "task-id", "task-show", "task-done", "task-cancel"]
+statement = "ID でタスクを探すときは、文字どおりに一致するタスクがあれば必ず見つけ、一致しなければ見つけない。空の ID、形の違う ID、大文字を含む ID は、どのタスクとも一致しない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "登録済みの ID で探すと必ず見つかること（タスクが 1 件・複数件のとき）。空・形の違う・大文字を含む ID・登録済みの ID の大文字にしたもので探すと見つからないこと"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "db-id-exact-match.txtar"
+
+[[claim]]
+id = "db-events-in-record-order"
+subjects = ["data-file", "event"]
+statement = "1 つのタスクのイベントを読み出すと、そのタスクのイベントが、漏れなく、それだけ、記録の順に並ぶ"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "2 つ以上のタスクにイベントがある状態で、1 つのタスクのイベントを読み出し、そのタスクのイベントが欠けず、ほかのタスクのイベントが混ざらず、日時が同じイベントも記録の順に並ぶこと"
+
+[[claim]]
+id = "db-decide-in-transaction"
+subjects = ["data-file", "task-add", "task-done", "task-cancel"]
+statement = "登録・完了・中止は、判定に使う事実（タスクがあるか、その状態、ID が重なるか）を、書き込みのトランザクションを始めてから、その中で読む"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "読み出しと書き込みが同じトランザクションにあること。同時実行のテストは #24 の範囲外"
+
+[[claim]]
+id = "db-facts-as-read"
+subjects = ["data-file", "task-add", "task-list", "task-done", "task-cancel"]
+statement = "モデルの判定に渡す事実（指定した ID のタスクとその状態、ID が登録済みか、一覧の元になるタスクの集まり）は、データのファイルから読んだまま渡す。読み落としも、読んだ値の書き換えもしない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "DB に直接入れた行と、読み出してモデルに渡す事実（タスクの有無と状態、ID が登録済みか、一覧の元の集まり）が一致すること"
+
+[[claim]]
+id = "db-busy"
+subjects = ["data-file", "error-code"]
+statement = "ほかのセッションが書き込み中なら、終わるまで待つ。決めた時間を待っても書き込めなければ、エラーコード internal_error を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "書き込み中の接続を作って待たせる"
+
+[[claim]]
+id = "db-constraint-violation"
+subjects = ["data-file", "error-code"]
+statement = "書き込みを、データのファイルの制約（ID の一意、終わったタスクの書き換えの拒否）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "制約に反する書き込みを起こす"
+
+[[claim]]
+id = "db-change-atomic"
+subjects = ["data-file", "task-add", "task-done", "task-cancel"]
+statement = "1 つの操作で変えるタスクとイベントは、まとめて保存されるか、まったく保存されないかのどちらか"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "書き込みの途中で失敗させ、何も残らないこと"
+
+[[claim]]
+id = "internal-error"
+subjects = ["error-code", "data-file", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤りなら、エラーコード internal_error を返す。新しい版の quenta が作ったデータのファイルは開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "開けない・新しい版のデータのファイル"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "internal-error.txtar"
+
+[[claim]]
+id = "data-persists"
+subjects = ["data-file", "task-add", "task-done", "task-cancel"]
+statement = "別々に CLI を起動しても、登録したタスクと状態の変更が残っている"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "data-persists.txtar"
+
+[[claim]]
+id = "data-file-wal"
+subjects = ["data-file"]
+statement = "データのファイルは、SQLite の WAL モードで使う"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "開いた後の journal_mode"
+
+# -- 全体 --
+
+[[claim]]
+id = "supported-os"
+subjects = ["install", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "台帳の主張は、Linux と macOS の両方で成り立つ"
+
+[[claim.evidence]]
+stage = "リリース"
+means = "人のレビュー"
+detail = "GitHub Actions の Linux と macOS の両方で make check（ここに挙げたすべてのテスト）が通ったことを、PO が ③ で結果を見て確かめる"
+
+[[claim]]
+id = "install-with-make"
+subjects = ["install"]
+statement = "Nix の環境で make install を実行すると、$PREFIX/bin/quenta に入る。PREFIX の既定は ~/.local。go install で入れられることは保証しない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "GitHub Actions で、一時の PREFIX に make install し、入った quenta を起動する"
