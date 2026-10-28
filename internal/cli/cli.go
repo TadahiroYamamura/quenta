@@ -312,7 +312,7 @@ func (c *command) finish(name, short string, k task.FinishKind) *cobra.Command {
 func exactArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) != n {
-			return fmt.Errorf("位置の引数は %d 個（%d 個ある）", n, len(args))
+			return fmt.Errorf("<ID> の引数は %d 個（%d 個ある）", n, len(args))
 		}
 		return nil
 	}
