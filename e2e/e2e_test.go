@@ -1,4 +1,4 @@
-// Package e2e は、e2e/testdata/*.txtar の台本を、ビルドした quenta で動かす
+// Package e2e は、e2e/testdata/*.txtar の台本を、cmd/quenta をビルドしたバイナリで動かす
 package e2e
 
 import (
@@ -12,14 +12,34 @@ import (
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
-
-	"github.com/TadahiroYamamura/quenta/internal/cli"
 )
 
+// binDir は、ビルドした quenta を置くディレクトリ。台本の PATH の先頭に置く
+var binDir string
+
+// TestMain は、本番と同じ入り口（cmd/quenta）をビルドしてから、台本を動かす
 func TestMain(m *testing.M) {
-	testscript.Main(m, map[string]func(){
-		"quenta": func() { os.Exit(cli.Run(os.Args[1:], cli.DefaultEnv(os.Getenv, os.Stdout, os.Stderr))) },
-	})
+	os.Exit(runMain(m))
+}
+
+func runMain(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "quenta-e2e-bin-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ビルドの置き場所を作れない:", err)
+		return 1
+	}
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "ビルドの置き場所を消せない:", err)
+		}
+	}()
+	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "quenta"), "github.com/TadahiroYamamura/quenta/cmd/quenta").CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quenta をビルドできない: %v\n%s", err, out)
+		return 1
+	}
+	binDir = dir
+	return m.Run()
 }
 
 func TestScripts(t *testing.T) {
@@ -40,6 +60,7 @@ func TestScripts(t *testing.T) {
 		Dir: "testdata",
 		// 台本には、外の環境変数（QUENTA_SESSION・XDG_DATA_HOME など）を、Go の道具の置き場所のほかは渡さない。台本の始めに QUENTA_SESSION がないことを、台本が前提にするため
 		Setup: func(env *testscript.Env) error {
+			env.Setenv("PATH", binDir+string(os.PathListSeparator)+env.Getenv("PATH"))
 			env.Setenv("QUENTA_REPO", repo)
 			env.Setenv("GOCACHE", gopaths[0])
 			env.Setenv("GOMODCACHE", gopaths[1])
