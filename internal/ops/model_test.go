@@ -46,7 +46,7 @@ func (s *idSource) Read(p []byte) (int, error) {
 // 主体・タイトル・本文・理由の候補。空白だけのもの（いろいろな空白の文字）と、空白だけでないもの（前後に空白、空白に見えるが空白でない文字を含む）
 var (
 	blankTexts    = []string{"", " ", "\t\n", "\u3000", "\u00a0\u2028"}
-	nonBlankTexts = []string{"a", " a ", "セッション", "\u3000x\u3000", "\u200b", "<&>"}
+	nonBlankTexts = []string{"a", " a ", "セッション", "\u3000x\u3000", "\u200b", "<&>", "A1!", "0", "~\U0010FFFF"}
 )
 
 type harness struct {

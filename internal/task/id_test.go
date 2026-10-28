@@ -39,3 +39,12 @@ func Test空白の文字の判定はすべての文字でGoのUnicodeのWhite_Sp
 		}
 	}
 }
+
+func Test完了か中止かの知らない値ではエラーを返し書き込む内容を作らない(t *testing.T) {
+	found := &task.Task{ID: "a", Status: task.Todo}
+	for _, k := range []task.FinishKind{0, task.FinishKind(len(task.FinishKinds) + 1)} {
+		if w, err := task.FinishDecide("s", "a", "r", k, 0, found); err == nil {
+			t.Fatalf("知らない値 %d で書き込む内容を作った: %+v", k, w)
+		}
+	}
+}

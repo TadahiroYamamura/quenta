@@ -25,7 +25,8 @@ var whiteSpaces = func() []rune {
 
 // boundaryTexts は、空白だけかの判定の境界になる文字列。どのテストでも必ず含める
 var boundaryTexts = func() []string {
-	xs := []string{"", "x", " x ", "\u3000x\u3000", "\u200b", "\ufeff", strings.Repeat("長", 2000), "多言語 مرحبا 😀"}
+	xs := []string{"", "x", " x ", "\u3000x\u3000", "\u200b", "\ufeff", strings.Repeat("長", 2000), "多言語 مرحبا 😀",
+		"0", "9", "A", "Z", "!", "~", "#", "\"", "'", "\\", "<&>", "a1B!", "\x7f", "\U0010FFFF"}
 	for _, r := range whiteSpaces {
 		xs = append(xs, string(r), string(r)+"x", "x"+string(r))
 	}
@@ -41,12 +42,22 @@ func randomText(rnd *rand.Rand) string {
 		case 0:
 			b.WriteRune(whiteSpaces[rnd.IntN(len(whiteSpaces))])
 		case 1:
-			b.WriteRune(rune('a' + rnd.IntN(26)))
+			b.WriteRune(rune(0x21 + rnd.IntN(0x7f-0x21))) // ASCII の空白でない文字（数字・大文字・小文字・記号）
 		default:
-			b.WriteRune(rune(0x80 + rnd.IntN(0x3000)))
+			b.WriteRune(randomScalar(rnd))
 		}
 	}
 	return b.String()
+}
+
+// randomScalar は、U+0021〜U+10FFFF の文字（サロゲートを除く）を 1 つ選ぶ。空白の文字に当たれば選び直す
+func randomScalar(rnd *rand.Rand) rune {
+	for {
+		r := rune(0x21 + rnd.IntN(0x10FFFF-0x21+1))
+		if (r < 0xD800 || r > 0xDFFF) && !oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) {
+			return r
+		}
+	}
 }
 
 // texts は、境界の文字列のすべてと、無作為な文字列を n 個返す
