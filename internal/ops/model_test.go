@@ -48,7 +48,7 @@ type harness struct {
 	now   int64
 }
 
-func newHarness(t *testing.T, seed uint64) *harness {
+func newHarness(t *testing.T, base, seed uint64) *harness {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "quenta.db")
 	s, err := store.Open(path)
@@ -61,7 +61,7 @@ func newHarness(t *testing.T, seed uint64) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	rnd := rand.New(rand.NewPCG(seed, seed))
+	rnd := rand.New(rand.NewPCG(base, seed))
 	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, now: 1_700_000_000}
 	h.impl = &ops.Ops{Store: s, Random: h.ids, Now: func() int64 { return h.now }}
 	h.initialState()
@@ -259,9 +259,10 @@ func (h *harness) compareState(step int) {
 
 // run は、無作為な操作の列（登録・一覧・完了・中止）を、モデルと実装の両方に送り、1 歩ごとに結果と状態の全体を比べる
 func run(t *testing.T, seeds, steps int) {
+	base := oracle.Seed(t)
 	for seed := range seeds {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
-			h := newHarness(t, uint64(seed))
+			h := newHarness(t, base, uint64(seed))
 			for step := range steps {
 				// 日時は、同じ秒のまま進まないこともあるように進める（作成日時が同じタスクを作るため）
 				h.now += int64(h.rnd.IntN(2))

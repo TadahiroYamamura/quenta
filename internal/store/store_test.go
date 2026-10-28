@@ -196,7 +196,7 @@ func TestIDで探すと文字どおりに一致するタスクだけが見つか
 // @assurance:evidence db-events-in-record-order
 func Testイベントは記録の順にそのタスクのものだけが漏れなく読み出される(t *testing.T) {
 	s, raw, _ := open(t)
-	rnd := rand.New(rand.NewPCG(1, 1))
+	rnd := rand.New(rand.NewPCG(oracle.Seed(t), 1))
 	want := map[string][]task.Event{}
 	ids := []string{"00000001", "00000002", "00000003"}
 	err := s.Write(func(tx *store.Tx) error {
@@ -447,9 +447,10 @@ func modelTasks(t *testing.T, s _dafny.Sequence) []task.Task {
 
 // @assurance:evidence db-facts-as-read
 func Test問い合わせの結果は同じ中身のモデルの問い合わせと一致する(t *testing.T) {
+	base := oracle.Seed(t)
 	for seed := range 200 {
 		s, raw, _ := open(t)
-		rnd := rand.New(rand.NewPCG(uint64(seed), 7))
+		rnd := rand.New(rand.NewPCG(base, uint64(seed)))
 		st := randomState(t, rnd, raw)
 		ms, err := st.Model()
 		if err != nil {
@@ -510,9 +511,10 @@ func Test問い合わせの結果は同じ中身のモデルの問い合わせ�
 
 // @assurance:evidence db-writes-as-model
 func Test判定が返した書き込みは同じ中身のモデルの書き込みと同じ変化を起こす(t *testing.T) {
+	base := oracle.Seed(t)
 	for seed := range 200 {
 		s, raw, _ := open(t)
-		rnd := rand.New(rand.NewPCG(uint64(seed), 9))
+		rnd := rand.New(rand.NewPCG(base, uint64(seed)+1000))
 		st := randomState(t, rnd, raw)
 		ms, err := st.Model()
 		if err != nil {

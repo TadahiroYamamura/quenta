@@ -121,7 +121,7 @@ func checkAdd(t *testing.T, actor, title, body, id string, now int64, taken bool
 // @assurance:evidence model-error-precedence
 // @assurance:evidence model-errors-only-when
 func Test登録の判定はどの入力でもモデルと同じエラーか同じ書き込む内容を返す(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(1, 2))
+	rnd := rand.New(rand.NewPCG(oracle.Seed(t), 2))
 	xs := texts(rnd, 200)
 	for range 20000 {
 		checkAdd(t, pick(rnd, xs), pick(rnd, xs), pick(rnd, xs), pick(rnd, xs), rnd.Int64N(4_000_000_000)-1_000_000_000, rnd.IntN(2) == 0)
@@ -138,7 +138,7 @@ func Test登録の判定はどの入力でもモデルと同じエラーか同�
 
 // @assurance:evidence task-add-empty-body
 func Test本文が何であっても登録の成否とエラーは変わらず成功すれば本文はそのまま入る(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(3, 4))
+	rnd := rand.New(rand.NewPCG(oracle.Seed(t), 4))
 	bodies := texts(rnd, 200)
 	for _, actor := range []string{"s", " ", ""} {
 		for _, title := range []string{"t", "\u3000", ""} {
@@ -215,7 +215,7 @@ func checkFinish(t *testing.T, actor, id, reason string, k task.FinishKind, now 
 // @assurance:evidence model-error-precedence
 // @assurance:evidence model-errors-only-when
 func Test完了と中止の判定はどの入力でもモデルと同じエラーか同じ書き込む内容を返す(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(5, 6))
+	rnd := rand.New(rand.NewPCG(oracle.Seed(t), 6))
 	xs := texts(rnd, 200)
 	fs := founds()
 	for range 20000 {
@@ -236,7 +236,7 @@ func Test完了と中止の判定はどの入力でもモデルと同じエラ�
 // @assurance:evidence session-required
 // @assurance:evidence task-list-order
 func Test一覧の判定は作成日時が同じタスクを含む集まりでもモデルと同じ列を返す(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(7, 8))
+	rnd := rand.New(rand.NewPCG(oracle.Seed(t), 8))
 	ids := []string{"00000001", "0000000a", "000000a0", "ffffffff", "abcdef01", "a", "ab", "b", "\u00e9", "z"}
 	for range 3000 {
 		var ts []task.Task
