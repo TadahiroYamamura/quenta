@@ -80,24 +80,41 @@ func DefaultEnv(getenv func(string) string, stdout, stderr io.Writer) Env {
 // Run は、quenta を args（コマンド名を除く）で動かし、終了コードを返す
 func Run(args []string, env Env) int {
 	args = dropValuelessLastFlag(args)
+	// cobra は、使い方を書けなかったことを返さないので、書き込みの誤りを見張る
+	out := &watchedWriter{w: env.Stdout}
+	env.Stdout = out
 	c := &command{env: env}
 	root := c.root()
 	root.SetArgs(args)
-	root.SetOut(env.Stdout)
+	root.SetOut(out)
 	root.SetErr(io.Discard)
 	// --help・-h は、ほかの条件にかかわらず使い方を返す（主張 error-precedence）。cobra は、知らないフラグがあると --help より先に誤りにするので、先に見る
 	if hasHelpFlag(args) {
-		cmd, _, err := root.Find(args)
-		if err != nil {
-			cmd = root
+		cmd, _, findErr := root.Find(args)
+		if findErr != nil {
+			cmd = root // 知らないサブコマンドなら、quenta の使い方を返す
 		}
-		cmd.Help()
+		err := cmd.Help()
+		if err == nil && out.err != nil {
+			err = fail(CodeInternalError, "使い方を標準出力に書けない: %v", out.err)
+		}
+		if err != nil {
+			return failed(err, env)
+		}
 		return 0
 	}
 	err := root.Execute()
+	if err == nil && out.err != nil {
+		err = fail(CodeInternalError, "標準出力に書けない: %v", out.err)
+	}
 	if err == nil {
 		return 0
 	}
+	return failed(err, env)
+}
+
+// failed は、失敗を JSON で標準エラーに書き、終了コードを返す
+func failed(err error, env Env) int {
 	var f *failure
 	if !errors.As(err, &f) {
 		// cobra が返す、引数の解釈の誤り（知らないフラグ、知らないサブコマンドなど）
@@ -106,7 +123,8 @@ func Run(args []string, env Env) int {
 			f = fail(CodeSessionRequired, "QUENTA_SESSION がないか、空白だけ")
 		}
 	}
-	writeJSON(env.Stderr, errorOutput{Error: errorBody{Code: string(f.code), Message: f.message}})
+	// 標準エラーにも書けなければ、書く先がないので、終了コードだけで伝える
+	_ = writeJSON(env.Stderr, errorOutput{Error: errorBody{Code: string(f.code), Message: f.message}})
 	return 1
 }
 
@@ -144,13 +162,13 @@ func (c *command) root() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
-		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+		RunE:          func(cmd *cobra.Command, _ []string) error { return helpOrFail(cmd) },
 	}
 	tasks := &cobra.Command{
 		Use:   "task",
 		Short: "タスクを登録し、一覧で見て、完了・中止にする",
 		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+		RunE:  func(cmd *cobra.Command, _ []string) error { return helpOrFail(cmd) },
 	}
 	tasks.AddCommand(c.add(), c.list(), c.show(), c.done(), c.cancel())
 	root.AddCommand(tasks)
@@ -175,17 +193,15 @@ func (c *command) add() *cobra.Command {
 			if task.IsBlank(title) {
 				return fail(CodeTitleRequired, "--title がないか、タイトルが空白だけ")
 			}
-			o, closer, err := c.open()
+			o, closeStore, err := c.open()
 			if err != nil {
 				return err
 			}
-			defer closer()
 			t, err := o.Add(actor, title, body)
-			if err != nil {
-				return c.opError(err)
+			if err := c.closeAfter(err, closeStore); err != nil {
+				return err
 			}
-			writeJSON(c.env.Stdout, taskOutput{Task: toTaskJSON(t)})
-			return nil
+			return c.output(taskOutput{Task: toTaskJSON(t)})
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "タイトル")
@@ -204,21 +220,19 @@ func (c *command) list() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			o, closer, err := c.open()
+			o, closeStore, err := c.open()
 			if err != nil {
 				return err
 			}
-			defer closer()
 			ts, err := o.List(actor, all)
-			if err != nil {
-				return c.opError(err)
+			if err := c.closeAfter(err, closeStore); err != nil {
+				return err
 			}
 			out := listOutput{Tasks: make([]taskJSON, 0, len(ts))}
 			for _, t := range ts {
 				out.Tasks = append(out.Tasks, toTaskJSON(t))
 			}
-			writeJSON(c.env.Stdout, out)
-			return nil
+			return c.output(out)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "終わったタスクも含める")
@@ -237,21 +251,19 @@ func (c *command) show() *cobra.Command {
 			if err := validUTF8(map[string]string{"<ID>": args[0]}); err != nil {
 				return err
 			}
-			o, closer, err := c.open()
+			o, closeStore, err := c.open()
 			if err != nil {
 				return err
 			}
-			defer closer()
 			t, es, err := o.Show(args[0])
-			if err != nil {
-				return c.opError(err)
+			if err := c.closeAfter(err, closeStore); err != nil {
+				return err
 			}
 			out := showOutput{Task: toTaskJSON(t), Events: make([]eventJSON, 0, len(es))}
 			for _, e := range es {
 				out.Events = append(out.Events, toEventJSON(e))
 			}
-			writeJSON(c.env.Stdout, out)
-			return nil
+			return c.output(out)
 		},
 	}
 }
@@ -281,17 +293,15 @@ func (c *command) finish(name, short string, k task.FinishKind) *cobra.Command {
 			if task.IsBlank(reason) {
 				return fail(CodeReasonRequired, "--reason がないか、理由が空白だけ")
 			}
-			o, closer, err := c.open()
+			o, closeStore, err := c.open()
 			if err != nil {
 				return err
 			}
-			defer closer()
 			t, err := o.Finish(actor, args[0], reason, k)
-			if err != nil {
-				return c.opError(err)
+			if err := c.closeAfter(err, closeStore); err != nil {
+				return err
 			}
-			writeJSON(c.env.Stdout, taskOutput{Task: toTaskJSON(t)})
-			return nil
+			return c.output(taskOutput{Task: toTaskJSON(t)})
 		},
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "理由")
@@ -340,7 +350,7 @@ func (c *command) dataPath() (string, error) {
 	return "", fail(CodeInternalError, "XDG_DATA_HOME が使えず、HOME もないので、データの置き場所が決まらない")
 }
 
-func (c *command) open() (*ops.Ops, func(), error) {
+func (c *command) open() (*ops.Ops, func() error, error) {
 	path, err := c.dataPath()
 	if err != nil {
 		return nil, nil, err
@@ -350,13 +360,59 @@ func (c *command) open() (*ops.Ops, func(), error) {
 		return nil, nil, c.opError(err)
 	}
 	o := &ops.Ops{Store: s, Random: c.env.Random, Now: func() int64 { return c.env.Now().Unix() }}
-	return o, func() { s.Close() }, nil
+	return o, s.Close, nil
+}
+
+// closeAfter は、操作の後にデータのファイルを閉じ、操作か閉じるときのエラーを、エラーコードに写して返す。
+// 結果の JSON は、閉じた後に書く（閉じられずに失敗を返すとき、標準出力に成功の JSON を書いてしまわないため）
+func (c *command) closeAfter(opErr error, closeStore func() error) error {
+	closeErr := closeStore()
+	if opErr != nil {
+		return c.opError(errors.Join(opErr, closeErr))
+	}
+	if closeErr != nil {
+		return fail(CodeInternalError, "データのファイルを閉じられない（書き込みは済んでいる）: %v", closeErr)
+	}
+	return nil
+}
+
+// output は、成功の JSON を標準出力に書く。書けなければ internal_error にする
+func (c *command) output(v any) error {
+	if err := writeJSON(c.env.Stdout, v); err != nil {
+		return fail(CodeInternalError, "結果を標準出力に書けない: %v", err)
+	}
+	return nil
+}
+
+// helpOrFail は、使い方を書く。書けなかったことは、Run が見張りの書き込み先から知る
+func helpOrFail(cmd *cobra.Command) error {
+	if err := cmd.Help(); err != nil {
+		return fail(CodeInternalError, "使い方を書けない: %v", err)
+	}
+	return nil
+}
+
+// watchedWriter は、書き込みの最初の誤りを覚える
+type watchedWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *watchedWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+	return n, err
 }
 
 // opError は、操作のエラーをエラーコードに写す
 func (c *command) opError(err error) error {
 	var f task.Failure
+	var already *failure
 	switch {
+	case errors.As(err, &already):
+		return already
 	case errors.As(err, &f):
 		return fail(codeOf(f), "%s", f.Error())
 	case errors.Is(err, store.ErrUnsupportedVersion):
@@ -426,8 +482,8 @@ func toEventJSON(e task.Event) eventJSON {
 }
 
 // writeJSON は、1 行の JSON と改行を書く。HTML の文字（<、>、&）は、そのまま書く
-func writeJSON(w io.Writer, v any) {
+func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	enc.Encode(v)
+	return enc.Encode(v)
 }

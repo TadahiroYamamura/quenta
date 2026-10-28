@@ -52,8 +52,7 @@ func Open(path string) (*Store, error) {
 	}
 	s := &Store{db: conn}
 	if err := s.migrate(); err != nil {
-		conn.Close()
-		return nil, err
+		return nil, errors.Join(err, conn.Close())
 	}
 	return s, nil
 }
@@ -135,8 +134,7 @@ func (s *Store) inTx(f func(*sql.Tx) error) error {
 		return wrapBusy(err)
 	}
 	if err := f(tx); err != nil {
-		tx.Rollback()
-		return wrapBusy(err)
+		return wrapBusy(errors.Join(err, tx.Rollback()))
 	}
 	return wrapBusy(tx.Commit())
 }
