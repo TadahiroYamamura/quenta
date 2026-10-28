@@ -1,4 +1,4 @@
-.PHONY: assurance assurance-test story-evidence docs docs-serve
+.PHONY: assurance assurance-test story-evidence docs docs-serve build install verify gen test mutation check
 
 PYTHON := python3 -I
 
@@ -21,3 +21,40 @@ docs: assurance
 # 手元で見る。表示された URL をブラウザで開く
 docs-serve: assurance
 	mkdocs serve
+
+PREFIX ?= $(HOME)/.local
+SPEC := spec/quenta.dfy
+# Dafny から生成する Go。テストからだけ使い、コミットしない
+GEN := internal/spec
+GEN_MODULE := github.com/TadahiroYamamura/quenta/$(GEN)
+
+build:
+	go build -o bin/quenta ./cmd/quenta
+
+install:
+	mkdir -p $(PREFIX)/bin
+	go build -o $(PREFIX)/bin/quenta ./cmd/quenta
+
+# 仕様の証明
+verify:
+	dafny verify $(SPEC)
+
+# 生成した System_ は、同梱したランタイムを "dafny" という名前で読み込もうとするので、同梱した場所に置き換える（読み込み先だけを変え、処理の中身には手を入れない）
+gen: $(GEN)/Quenta/Quenta.go
+
+$(GEN)/Quenta/Quenta.go: $(SPEC)
+	rm -rf $(GEN) $(GEN)-go
+	dafny translate go $(SPEC) --no-verify --include-runtime --output $(GEN) --go-module-name $(GEN_MODULE)
+	mkdir -p $(GEN)
+	mv $(GEN)-go/Quenta $(GEN)-go/System_ $(GEN)-go/dafny $(GEN)/
+	rm -rf $(GEN)-go
+	sed -i.bak 's#_dafny "dafny"#_dafny "$(GEN_MODULE)/dafny"#' $(GEN)/System_/System_.go && rm $(GEN)/System_/System_.go.bak
+
+test: gen
+	go test ./...
+
+# 実装の Go の変異テスト。生き残った変異が 1 つでもあれば失敗する
+mutation: gen
+	go run github.com/go-gremlins/gremlins/cmd/gremlins unleash --exclude-files '^internal/spec/' --threshold-efficacy 100 ./...
+
+check: assurance assurance-test verify test mutation

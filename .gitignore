@@ -4,3 +4,6 @@
 /site/
 # Python が tools/ の下に作るキャッシュ
 __pycache__/
+# make が生成する（Dafny から生成した Go と、ビルドしたバイナリ）
+/internal/spec/
+/bin/
