@@ -212,7 +212,7 @@ detail = "登録済みの ID を渡し、登録されず重なりが返ること
 id = "task-list-unfinished"
 subjects = ["task-list", "task-status"]
 statement = "終わったタスクを含めないと指定された一覧は、渡されたタスクの集まりのうち、終わっていない状態のタスクを、漏れなく、それだけ、1 度ずつ返す"
-condition = "主体が空白だけでないとき（主張 session-required）"
+condition = "主体が空白だけでなく（主張 session-required）、渡された集まりの ID が重ならないとき（主張 db-task-id-unique・db-facts-as-read）"
 
 [[claim.evidence]]
 stage = "計画"
@@ -228,7 +228,7 @@ detail = "登録・一覧・完了・中止の操作の列を、モデルと実�
 id = "task-list-all"
 subjects = ["task-list", "task-status"]
 statement = "終わったタスクを含めると指定された一覧は、渡されたタスクの集まりを、漏れなく、それだけ、1 度ずつ返す"
-condition = "主体が空白だけでないとき（主張 session-required）"
+condition = "主体が空白だけでなく（主張 session-required）、渡された集まりの ID が重ならないとき（主張 db-task-id-unique・db-facts-as-read）"
 
 [[claim.evidence]]
 stage = "計画"
@@ -244,7 +244,7 @@ detail = "登録・一覧・完了・中止の操作の列を、モデルと実�
 id = "task-list-order"
 subjects = ["task-list", "task-created-at"]
 statement = "一覧は作成日時の古い順に並ぶ。作成日時が同じなら、ID の昇順（文字の順）に並ぶ"
-condition = "主体が空白だけでないとき（主張 session-required）"
+condition = "主体が空白だけでなく（主張 session-required）、渡された集まりの ID が重ならないとき（主張 db-task-id-unique・db-facts-as-read）"
 
 [[claim.evidence]]
 stage = "計画"
@@ -618,6 +618,31 @@ means = "CLI のインターフェースのテスト"
 detail = "ビルドした quenta を起動し、その OS で 1 つの引数として渡せる最大に近い長さ（Linux は 1 つの引数の上限 128 KiB の手前、macOS は引数と環境変数の合計の上限 ARG_MAX から環境の分を引いた長さの手前）のタイトルと本文で登録し、同じ長さの理由で完了と中止をし（別々のタスクで）、表示で同じ値が返ること。E2E の台本には長い文字列を書けないので、Go のテストで行う"
 
 [[claim]]
+id = "cli-args-as-given"
+subjects = ["task-add", "task-show", "task-done", "task-cancel", "task-title", "task-body", "event-reason", "task-id"]
+statement = "--title・--body・--reason の値と、<ID> の引数は、前後の空白も含めてそのまま判定に渡す"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "前後に空白（White_Space の文字）や改行のある値を、引数ごとに渡し、判定に渡る値が同じであること"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "E2E テスト"
+detail = "cli-args-as-given.txtar"
+
+[[claim]]
+id = "cli-list-output"
+subjects = ["task-list"]
+statement = "一覧の JSON の tasks は、一覧の判定が返したタスクを、その順で、漏れなく、それだけ並べる"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "作成日時が同じタスクを含む DB の中身で一覧を出し、tasks が、同じ中身から一覧の判定（ListDecide）が返した列と同じであること"
+
+[[claim]]
 id = "cli-returns-changed-task"
 subjects = ["task-add", "task-done", "task-cancel"]
 statement = "登録・完了・中止に成功すると、加わった・変わったタスクを JSON で返す"
@@ -777,7 +802,7 @@ detail = "読み出しと書き込みが同じトランザクションにある�
 [[claim]]
 id = "db-facts-as-read"
 subjects = ["data-file", "task-add", "task-list", "task-done", "task-cancel"]
-statement = "実装の判定に渡す事実（ID が登録済みか、指定した ID のタスク（なければ「なし」）、一覧の元になるタスクの全体）は、DB のモデルの問い合わせが同じデータに対して返す値と一致する"
+statement = "実装の判定に渡す事実（ID が登録済みか、指定した ID のタスク（なければ「なし」）、一覧の元になるタスクの全体）は、DB のモデルの問い合わせが同じデータに対して返す値と一致する。一覧の元になるタスクの全体は、集まりとして比べる（並びは問わない）"
 
 [[claim.evidence]]
 stage = "テスト"
@@ -788,11 +813,12 @@ detail = "無作為な DB の中身を作り、実装の問い合わせの結果
 id = "db-writes-as-model"
 subjects = ["data-file", "task-add", "task-done", "task-cancel"]
 statement = "実装の書き込みは、DB のモデルの書き込みと同じ変化をデータに起こす。登録は、タスクとイベントを 1 つずつ足すだけ。完了・中止は、指定したタスクの状態を変え、イベントを 1 件足すだけ"
+condition = "判定が、DB に問い合わせた事実から返した書き込みについて（DB のモデルの書き込みの前提 AddWritable・FinishWritable を満たすもの）"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "無作為な DB の中身に実装で書き込み、書き込んだ後の DB を、同じ中身を写したモデルの書き込み（ApplyAdd・ApplyFinish）の結果と比べる"
+detail = "無作為な DB の中身に、判定が返した書き込みを実装で書き込み、書き込んだ後の DB を、同じ中身を写したモデルの書き込み（ApplyAdd・ApplyFinish）の結果と比べる"
 
 [[claim]]
 id = "db-busy"
