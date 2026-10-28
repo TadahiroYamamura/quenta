@@ -21,12 +21,19 @@ mutants=(
   'internal/task/task.go|	case Canceling:\n		return Canceled, true|	case Canceling:\n		return Done, true|outside|中止の行き先を done にする'
 )
 total=0; caught=0; failed=0
+# 途中で止めたときも、書き換えたファイルを元に戻す
+current=""
+restore() { if [ -n "$current" ] && [ -f "$current.orig" ]; then mv "$current.orig" "$current"; fi; }
+trap 'restore; exit 130' INT TERM
+trap restore EXIT
 for m in "${mutants[@]}"; do
   IFS='|' read -r file from to expect label <<<"$m"
+  current="$file"
   cp "$file" "$file.orig"
   python3 -I -c 'import sys;p,f,t=sys.argv[1:];s=open(p).read();f=f.replace("\\n","\n");t=t.replace("\\n","\n");f=f.replace("\\&","&");t=t.replace("\\&","&");assert s.count(f)==1,f;open(p,"w").write(s.replace(f,t))' "$file" "$from" "$to" || { mv "$file.orig" "$file"; echo "当てられない変異: $label" >&2; exit 1; }
   out=$(go test -count=1 -tags checkpower -run 'Test操作を実行してエラーにならない' ./internal/ops/ 2>&1)
   mv "$file.orig" "$file"
+  current=""
   total=$((total+1))
   if grep -q '\[build failed\]\|\[setup failed\]' <<<"$out"; then
     echo "道具の誤り: 変異「$label」を当てたコードがビルドできない" >&2; echo "$out" >&2; failed=1; continue
