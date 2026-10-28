@@ -3,6 +3,7 @@ package oracle
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -225,22 +226,22 @@ func ReadState(db *sql.DB) (State, error) {
 	for rows.Next() {
 		var t task.Task
 		if err := rows.Scan(&t.ID, &t.Title, &t.Body, &t.Status, &t.CreatedAt); err != nil {
-			rows.Close()
-			return s, err
+			return s, errors.Join(err, rows.Close())
 		}
 		s.Tasks = append(s.Tasks, t)
 	}
-	rows.Close()
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return s, err
+	}
 	rows, err = db.Query("SELECT task_id, actor, from_status, to_status, reason, at FROM events ORDER BY seq")
 	if err != nil {
 		return s, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var e task.Event
 		var from sql.NullString
 		if err := rows.Scan(&e.TaskID, &e.Actor, &from, &e.To, &e.Reason, &e.At); err != nil {
-			return s, err
+			return s, errors.Join(err, rows.Close())
 		}
 		if from.Valid {
 			f := task.Status(from.String)
@@ -248,7 +249,7 @@ func ReadState(db *sql.DB) (State, error) {
 		}
 		s.Events = append(s.Events, e)
 	}
-	return s, rows.Err()
+	return s, errors.Join(rows.Err(), rows.Close())
 }
 
 // Failure は、モデルのエラーを、実装の判定のエラーに写す

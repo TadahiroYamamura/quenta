@@ -66,7 +66,7 @@ func addWrite(id, title, body, actor string, now int64) task.AddWrite {
 func Testタスクとイベントは渡された値のまま保存され読み出しても変わらない(t *testing.T) {
 	s, raw, _ := open(t)
 	var allSpaces []rune
-	for r := rune(0); r <= 0x3000; r++ {
+	for r := rune(0); r <= 0x10FFFF; r++ {
 		if oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) { // 仕様が空白とする文字のすべて
 			allSpaces = append(allSpaces, r)
 		}
@@ -114,9 +114,8 @@ func Testタスクとイベントは渡された値のまま保存され読み�
 func Test同じIDの行を直接入れると拒まれる(t *testing.T) {
 	_, raw, _ := open(t)
 	mustExec(t, raw, "INSERT INTO tasks VALUES ('00000001', 't', '', 'todo', 1)")
-	if _, err := raw.Exec("INSERT INTO tasks VALUES ('00000001', 'u', '', 'todo', 2)"); err == nil {
-		t.Fatal("同じ ID の行が入った")
-	}
+	_, err := raw.Exec("INSERT INTO tasks VALUES ('00000001', 'u', '', 'todo', 2)")
+	rejectedBy(t, err, "UNIQUE constraint failed: tasks.id", "同じ ID の行")
 	// 大文字と小文字は別の ID
 	mustExec(t, raw, "INSERT INTO tasks VALUES ('0000000A', 't', '', 'todo', 1)")
 	mustExec(t, raw, "INSERT INTO tasks VALUES ('0000000a', 't', '', 'todo', 1)")
@@ -130,8 +129,8 @@ func Test終わったタスクの状態をUPDATEで書き換えると拒まれ�
 			id := "id-" + string(st) + "-" + string(to)
 			mustExec(t, raw, "INSERT INTO tasks VALUES (?, 't', '', ?, 1)", id, string(st))
 			_, err := raw.Exec("UPDATE tasks SET status = ? WHERE id = ?", string(to), id)
-			if st.IsFinished() && err == nil {
-				t.Fatalf("%s のタスクを %s に書き換えられた", st, to)
+			if st.IsFinished() {
+				rejectedBy(t, err, "tasks_finished_unchangeable", fmt.Sprintf("%s のタスクを %s に書き換える", st, to))
 			}
 			if !st.IsFinished() && err != nil {
 				t.Fatalf("%s のタスクを %s に書き換えられなかった: %v", st, to, err)
@@ -144,20 +143,16 @@ func Test終わったタスクの状態をUPDATEで書き換えると拒まれ�
 func Test知らない状態の値は直接入れても書き換えても拒まれる(t *testing.T) {
 	_, raw, _ := open(t)
 	for _, bad := range []string{"bogus", "TODO", "", " todo"} {
-		if _, err := raw.Exec("INSERT INTO tasks VALUES ('x', 't', '', ?, 1)", bad); err == nil {
-			t.Fatalf("tasks.status に %q が入った", bad)
-		}
-		if _, err := raw.Exec("INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('x', 'a', ?, 'todo', '', 1)", bad); err == nil {
-			t.Fatalf("events.from_status に %q が入った", bad)
-		}
-		if _, err := raw.Exec("INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('x', 'a', NULL, ?, '', 1)", bad); err == nil {
-			t.Fatalf("events.to_status に %q が入った", bad)
-		}
+		_, err := raw.Exec("INSERT INTO tasks VALUES ('x', 't', '', ?, 1)", bad)
+		rejectedBy(t, err, "tasks_status_known", fmt.Sprintf("tasks.status に %q", bad))
+		_, err = raw.Exec("INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('x', 'a', ?, 'todo', '', 1)", bad)
+		rejectedBy(t, err, "events_status_known", fmt.Sprintf("events.from_status に %q", bad))
+		_, err = raw.Exec("INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('x', 'a', NULL, ?, '', 1)", bad)
+		rejectedBy(t, err, "events_status_known", fmt.Sprintf("events.to_status に %q", bad))
 	}
 	mustExec(t, raw, "INSERT INTO tasks VALUES ('y', 't', '', 'todo', 1)")
-	if _, err := raw.Exec("UPDATE tasks SET status = 'bogus' WHERE id = 'y'"); err == nil {
-		t.Fatal("todo のタスクの状態を知らない値に書き換えられた")
-	}
+	_, err := raw.Exec("UPDATE tasks SET status = 'bogus' WHERE id = 'y'")
+	rejectedBy(t, err, "tasks_status_known", "todo のタスクの状態を知らない値に書き換える")
 	// 変更前の「なし」と、知っている値は入る
 	for _, st := range task.Statuses {
 		mustExec(t, raw, "INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES ('y', 'a', ?, ?, '', 1)", string(st), string(st))
@@ -247,9 +242,7 @@ func Test判定に使う事実を読む前から書き込みのトランザク�
 	err := s.Write(func(tx *store.Tx) error {
 		// まだ何も書いていない（読む前）時点で、ほかの接続は書き込みを始められない
 		_, err := raw.Exec("INSERT INTO tasks VALUES ('other', 't', '', 'todo', 1)")
-		if err == nil {
-			t.Error("書き込みのトランザクションの中で、ほかの接続が書き込めた")
-		}
+		rejectedBy(t, err, "database is locked", "書き込みのトランザクションの中で、ほかの接続が書き込む")
 		_, err = tx.IDTaken("other")
 		return err
 	})
@@ -298,6 +291,15 @@ func Test書き込みを制約が拒むとエラーになりタスクもイベ�
 	}
 	mustExec(t, raw, "INSERT INTO tasks VALUES ('done0001', 't', '', 'done', 0)")
 	before := state(t, raw)
+	// 拒まれる理由（制約・トリガーの名前、実装の誤りの文）も確かめる。別の理由で失敗したまま通らないように
+	reasons := map[string]string{
+		"すでにある ID で登録する":          "UNIQUE constraint failed: tasks.id",
+		"知らない状態で登録する":             "tasks_status_known",
+		"イベントの状態が知らない値（タスクは入った後）": "events_status_known",
+		"終わったタスクの状態を変える":          "tasks_finished_unchangeable",
+		"状態を変えた後のイベントが知らない値":      "events_status_known",
+		"ない ID の状態を変える":           "状態を変えるタスクが 1 つでない",
+	}
 	writes := map[string]func(*store.Tx) error{
 		"すでにある ID で登録する": func(tx *store.Tx) error { return tx.ApplyAdd(addWrite("00000001", "u", "", "a", 1)) },
 		"知らない状態で登録する": func(tx *store.Tx) error {
@@ -321,9 +323,7 @@ func Test書き込みを制約が拒むとエラーになりタスクもイベ�
 		},
 	}
 	for name, w := range writes {
-		if err := s.Write(w); err == nil {
-			t.Errorf("%s: エラーにならなかった", name)
-		}
+		rejectedBy(t, s.Write(w), reasons[name], name)
 		if after := state(t, raw); !reflect.DeepEqual(after, before) {
 			t.Errorf("%s: 中身が変わった\n前: %+v\n後: %+v", name, before, after)
 		}
@@ -454,6 +454,7 @@ func modelTasks(t *testing.T, s _dafny.Sequence) []task.Task {
 // @assurance:evidence db-facts-as-read
 func Test問い合わせの結果は同じ中身のモデルの問い合わせと一致する(t *testing.T) {
 	base := oracle.Seed(t)
+	outcome := map[string]int{}
 	for seed := range 200 {
 		s, raw, _ := open(t)
 		rnd := rand.New(rand.NewPCG(base, uint64(seed)))
@@ -468,6 +469,7 @@ func Test問い合わせの結果は同じ中身のモデルの問い合わせ�
 				if err != nil {
 					return err
 				}
+				outcome[fmt.Sprintf("登録済みか %v", taken)]++
 				if taken != oracle.M.QueryIdTaken(ms, oracle.Str(id)) {
 					t.Fatalf("ID %q が登録済みか: 実装 %v、モデル %v", id, taken, !taken)
 				}
@@ -475,6 +477,7 @@ func Test問い合わせの結果は同じ中身のモデルの問い合わせ�
 				if err != nil {
 					return err
 				}
+				outcome[fmt.Sprintf("見つかる %v", found != nil)]++
 				mq := oracle.M.QueryTask(ms, oracle.Str(id))
 				if mq.Is_None() != (found == nil) {
 					t.Fatalf("ID %q のタスク: 実装 %+v、モデル %v", id, found, mq)
@@ -507,10 +510,18 @@ func Test問い合わせの結果は同じ中身のモデルの問い合わせ�
 			if !reflect.DeepEqual(all, want) {
 				t.Fatalf("タスクの全体（集まりとして比べる）: 実装 %+v、モデル %+v", all, want)
 			}
+			outcome[fmt.Sprintf("タスクの全体が空 %v", len(all) == 0)]++
 			return nil
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+	// どの経路も十分に通ったことを確かめる（入力の作り方が変わって、見つかる・見つからないの片方しか通らなくなったまま通り続けないように）
+	t.Logf("結果の回数: %v", outcome)
+	for _, k := range []string{"登録済みか true", "登録済みか false", "見つかる true", "見つかる false", "タスクの全体が空 true", "タスクの全体が空 false"} {
+		if outcome[k] < 20 {
+			t.Errorf("%s が %d 回しか起きなかった（20 回以上起きるはず）", k, outcome[k])
 		}
 	}
 }
@@ -518,7 +529,8 @@ func Test問い合わせの結果は同じ中身のモデルの問い合わせ�
 // @assurance:evidence db-writes-as-model
 func Test判定が返した書き込みは同じ中身のモデルの書き込みと同じ変化を起こす(t *testing.T) {
 	base := oracle.Seed(t)
-	for seed := range 200 {
+	outcome := map[string]int{}
+	for seed := range 400 { // 完了・中止が書き込みまで進むのは 1 割ほどなので、下限を十分に超えるよう 400 回試す
 		s, raw, _ := open(t)
 		rnd := rand.New(rand.NewPCG(base, uint64(seed)+1000))
 		st := randomState(t, rnd, raw)
@@ -532,8 +544,10 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 			taken := oracle.M.QueryIdTaken(ms, oracle.Str(id))
 			w, err := task.AddDecide("a", "題", "本文", id, 5, taken)
 			if err != nil {
+				outcome["登録 判定がエラー"]++
 				continue // 判定がエラーを返した書き込みは、主張の外
 			}
+			outcome["登録 書き込み"]++
 			mw, ok := oracle.M.AddDecide(oracle.Str("a"), oracle.Str("題"), oracle.Str("本文"), oracle.Str(id), oracle.Int(5), taken).Dtor_value().(Q.AddWrite)
 			if !ok {
 				t.Fatal("モデルの登録の判定の結果が AddWrite でない")
@@ -543,7 +557,11 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 				t.Fatal(err)
 			}
 		} else {
+			// 8 割は DB にあるタスクから選ぶ（完了・中止が書き込みまで進む回数を確保するため）。残りは、ない ID も含む候補から選ぶ
 			id := []string{"00000001", "00000002", "0000000a", "ffffffff", "abcdef01"}[rnd.IntN(5)]
+			if len(st.Tasks) > 0 && rnd.IntN(5) != 0 {
+				id = st.Tasks[rnd.IntN(len(st.Tasks))].ID
+			}
 			var found *task.Task
 			if err := s.Write(func(tx *store.Tx) error { var e error; found, e = tx.FindTask(id); return e }); err != nil {
 				t.Fatal(err)
@@ -551,8 +569,10 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 			k := task.FinishKinds[rnd.IntN(2)]
 			w, err := task.FinishDecide("a", id, "理由", k, 5, found)
 			if err != nil {
+				outcome["完了・中止 判定がエラー"]++
 				continue
 			}
+			outcome[fmt.Sprintf("完了・中止 書き込み %v", k)]++
 			mk, err := oracle.Kind(k)
 			if err != nil {
 				t.Fatal(err)
@@ -572,6 +592,12 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 		}
 		if got := state(t, raw); !reflect.DeepEqual(got, wantGo) {
 			t.Fatalf("書き込んだ後の中身: 実装 %+v、モデル %+v", got, wantGo)
+		}
+	}
+	t.Logf("結果の回数: %v", outcome)
+	for _, k := range []string{"登録 書き込み", "登録 判定がエラー", fmt.Sprintf("完了・中止 書き込み %v", task.Completing), fmt.Sprintf("完了・中止 書き込み %v", task.Canceling), "完了・中止 判定がエラー"} {
+		if outcome[k] < 5 {
+			t.Errorf("%s が %d 回しか起きなかった（5 回以上起きるはず）", k, outcome[k])
 		}
 	}
 }
@@ -599,5 +625,16 @@ func Test移行を当て済みのデータのファイルは開き直しても�
 	}
 	if n := len(state(t, raw).Tasks); n != 3 {
 		t.Fatalf("タスクが %d 個", n)
+	}
+}
+
+// rejectedBy は、err が、want を含む理由（制約やトリガーの名前、SQLite の誤りの文）で拒まれたことを確かめる
+func rejectedBy(t *testing.T, err error, want, what string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: 拒まれなかった", what)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("%s: %q ではない理由で拒まれた: %v", what, want, err)
 	}
 }

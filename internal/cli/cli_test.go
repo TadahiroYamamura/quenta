@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -69,8 +71,8 @@ func (f *fixture) ok(args ...string) map[string]any {
 func (f *fixture) fail(args ...string) (string, string) {
 	f.t.Helper()
 	code, out := f.run(args...)
-	if code == 0 {
-		f.t.Fatalf("%v: 成功した: %s", args, out)
+	if code != 1 {
+		f.t.Fatalf("%v: 終了コード %d（失敗は 1 のはず）: %s", args, code, out)
 	}
 	var v map[string]map[string]any
 	if err := json.Unmarshal([]byte(out), &v); err != nil {
@@ -222,7 +224,7 @@ func Testモデルのエラーはすべて同じ名前のエラーコードに�
 // @assurance:evidence cli-input-checked-before-open
 func Test主体とタイトルと理由が空白だけならデータのファイルを開かずにエラーを返す(t *testing.T) {
 	var spaces []string
-	for r := rune(0); r <= 0x3000; r++ {
+	for r := rune(0); r <= 0x10FFFF; r++ {
 		if oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) { // 仕様が空白とする文字。実装の判定から作らない
 			spaces = append(spaces, string(r))
 		}
@@ -542,13 +544,17 @@ func buildQuenta(t *testing.T) string {
 	return bin
 }
 
-// argLimit は、その OS で 1 つの引数として渡せる長さの、手前の長さ
-func argLimit(t *testing.T, env []string) int {
+// argLimits は、その OS で 1 つの引数として渡せる最大のバイト数（near）と、渡せないことが分かっているバイト数（over）を返す
+func argLimits(t *testing.T, env []string) (near, over int) {
 	t.Helper()
 	switch runtime.GOOS {
 	case "linux":
-		return 131072 - 1024 // 1 つの引数の上限（MAX_ARG_STRLEN）の手前
+		// 1 つの引数の上限は MAX_ARG_STRLEN = ページの大きさ × 32 で、終わりの NUL を含む（Linux の include/uapi/linux/binfmts.h）
+		max := os.Getpagesize()*32 - 1
+		return max, max + 1
 	case "darwin":
+		// 引数と環境変数の合計（文字列と NUL と、それを指す表）が ARG_MAX を超えると E2BIG（macOS の execve(2)）。
+		// 表の大きさを正確には求めにくいので、手前の長さは、環境と表の分に余裕を足して引く
 		out, err := exec.Command("getconf", "ARG_MAX").Output()
 		if err != nil {
 			t.Fatal(err)
@@ -561,10 +567,15 @@ func argLimit(t *testing.T, env []string) int {
 		for _, e := range env {
 			used += len(e) + 1 + 8
 		}
-		return max - used - 64*1024 // 引数と環境変数の合計の上限（ARG_MAX）から、環境の分と余裕を引いた長さ
+		return max - used - 64*1024, max
 	}
 	t.Skipf("%s は対象の OS でない", runtime.GOOS)
-	return 0
+	return 0, 0
+}
+
+// textOfBytes は、ちょうど n バイトの、多言語の文字を含む文字列を作る
+func textOfBytes(n int) string {
+	return strings.Repeat("長", n/3) + strings.Repeat("a", n%3) // 「長」は UTF-8 で 3 バイト
 }
 
 // @assurance:evidence cli-no-length-limit
@@ -572,8 +583,14 @@ func Testタイトルと本文と理由は長さを理由に拒まずOSの引数
 	bin := buildQuenta(t)
 	dir := t.TempDir()
 	env := []string{"QUENTA_SESSION=s1", "XDG_DATA_HOME=" + dir, "PATH=" + os.Getenv("PATH")}
-	n := argLimit(t, env)
-	long := strings.Repeat("長", n/3) // 「長」は UTF-8 で 3 バイト
+	near, over := argLimits(t, env)
+	long := textOfBytes(near)
+	// over の長さは OS が渡さないこと（E2BIG）を確かめ、near が本当に上限の手前であることの裏付けにする
+	tooLong := exec.Command(bin, "task", "add", "--title", textOfBytes(over))
+	tooLong.Env = env
+	if err := tooLong.Run(); !errors.Is(err, syscall.E2BIG) {
+		t.Fatalf("上限を超える %d バイトの引数が、E2BIG にならなかった: %v", over, err)
+	}
 	run := func(args ...string) map[string]any {
 		cmd := exec.Command(bin, args...)
 		cmd.Env = env
@@ -668,6 +685,9 @@ func Testほかのセッションの書き込みを待ちきれなければbusy_
 		t.Fatal(err)
 	}
 	f.code(CodeBusyTimeout, "task", "add", "--title", "u")
+	// 一覧と表示も、書き込みのトランザクションの中で読むので、同じく待ち、待ちきれなければ busy_timeout
+	f.code(CodeBusyTimeout, "task", "list")
+	f.code(CodeBusyTimeout, "task", "show", "00000001")
 	if _, err := conn.ExecContext(t.Context(), "ROLLBACK"); err != nil {
 		t.Fatal(err)
 	}

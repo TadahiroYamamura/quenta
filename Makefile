@@ -50,8 +50,9 @@ $(GEN)/Quenta/Quenta.go: $(SPEC)
 	rm -rf $(GEN)-go
 	sed -i.bak 's#_dafny "dafny"#_dafny "$(GEN_MODULE)/dafny"#' $(GEN)/System_/System_.go && rm $(GEN)/System_/System_.go.bak
 
+# -count=1 で、結果を使い回さない（無作為な入力のテストのシード値を、毎回変えるため）
 test: gen
-	go test ./...
+	go test -count=1 ./...
 
 # 実装の Go の変異テスト。生き残った変異と、テストの通らない変異のうち、除外の一覧（spec/mutation-exclusions.toml）にないものが 1 つでもあれば失敗する
 # Dafny から生成したコードと、テストの補助（internal/oracle）は対象にしない

@@ -177,13 +177,12 @@ func (t *Tx) Tasks() ([]task.Task, error) {
 }
 
 // EventsOf は、その ID のタスクのイベントを、記録の順に返す
-func (t *Tx) EventsOf(id string) ([]task.Event, error) {
+func (t *Tx) EventsOf(id string) (es []task.Event, err error) {
 	rows, err := t.tx.Query("SELECT task_id, actor, from_status, to_status, reason, at FROM events WHERE task_id = ? ORDER BY seq", id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var es []task.Event
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var e task.Event
 		var from sql.NullString
@@ -239,9 +238,8 @@ func (t *Tx) insertEvent(e task.Event) error {
 	return err
 }
 
-func scanTasks(rows *sql.Rows) ([]task.Task, error) {
-	defer rows.Close()
-	var ts []task.Task
+func scanTasks(rows *sql.Rows) (ts []task.Task, err error) {
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	for rows.Next() {
 		var tk task.Task
 		var st string

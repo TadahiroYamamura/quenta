@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -262,6 +263,25 @@ func (h *harness) stepList() {
 	if !reflect.DeepEqual(got, wantTasks) {
 		h.t.Fatalf("一覧（%q, %v）: モデルは %+v、実装は %+v", actor, all, wantTasks, got)
 	}
+	// 一覧の細かい経路を数える（作成日時が同じタスクが並ぶ、--all で終わったタスクを含む、既定で終わったタスクを除く）
+	for i := 1; i < len(got); i++ {
+		if got[i-1].CreatedAt == got[i].CreatedAt {
+			h.outcome["一覧 作成日時が同じ並び"]++
+			break
+		}
+	}
+	finishedIn := slices.ContainsFunc(got, func(t task.Task) bool { return t.Status.IsFinished() })
+	all0, err := oracle.GoTasks(h.model.Dtor_tasks())
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	finishedExists := slices.ContainsFunc(all0, func(t task.Task) bool { return t.Status.IsFinished() })
+	if all && finishedIn {
+		h.outcome["一覧 終わったタスクを含む"]++
+	}
+	if !all && finishedExists {
+		h.outcome["一覧 終わったタスクを除く"]++
+	}
 }
 
 var failureNames = map[task.Failure]string{
@@ -341,12 +361,13 @@ func run(t *testing.T, seeds, steps int) map[string]int {
 
 // minOutcomes は、操作の列の全体で、少なくともこれだけ起きることを求める結果の回数。
 // 入力の候補が変わって、成功やエラーの経路を通らなくなったまま、テストが通り続けないようにするため。
-// 回数は、2026-10-28 に計った割合（40 系列 × 60 歩で、登録の成功 約 480、完了・中止の成功 約 140 ずつ、各エラー 40〜260）の、およそ 3 分の 1 から 5 分の 1
+// 回数は、2026-10-28 に計った割合（40 系列 × 60 歩で、登録の成功 約 480、完了・中止の成功 約 140 ずつ、各エラー 40〜260、一覧の細かい経路 約 270〜300）の、およそ 3 分の 1 から 5 分の 1
 var minOutcomes = map[string]int{
 	"登録 成功": 150, "登録 session_required": 15, "登録 title_required": 15, "登録 ID の作り直し": 10,
 	"完了 成功": 40, "完了 session_required": 10, "完了 reason_required": 15, "完了 not_found": 20, "完了 already_finished": 50,
 	"中止 成功": 40, "中止 session_required": 10, "中止 reason_required": 15, "中止 not_found": 20, "中止 already_finished": 50,
 	"一覧 成功": 150, "一覧 session_required": 15,
+	"一覧 作成日時が同じ並び": 80, "一覧 終わったタスクを含む": 80, "一覧 終わったタスクを除く": 80,
 }
 
 // @assurance:evidence task-add-saves-todo
