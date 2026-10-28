@@ -544,7 +544,10 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 			if err != nil {
 				continue
 			}
-			mk, _ := oracle.Kind(k)
+			mk, err := oracle.Kind(k)
+			if err != nil {
+				t.Fatal(err)
+			}
 			mw := oracle.M.FinishDecide(oracle.Str("a"), oracle.Str(id), oracle.Str("理由"), mk, oracle.Int(5), oracle.M.QueryTask(ms, oracle.Str(id))).Dtor_value().(Q.FinishWrite)
 			want = oracle.M.ApplyFinish(ms, mw)
 			if err := s.Write(func(tx *store.Tx) error { return tx.ApplyFinish(w) }); err != nil {

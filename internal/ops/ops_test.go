@@ -51,8 +51,8 @@ func Test作るIDは16進の小文字8桁で毎回ちがう値になる(t *testi
 		t.Fatalf("2000 個の ID のうち、違う値が %d 個しかない", len(seen))
 	}
 	// 材料のバイトがそのまま 16 進の小文字になる
-	if id, _ := task.NewID(bytes.NewReader([]byte{0xab, 0xcd, 0x01, 0xef})); id != "abcd01ef" {
-		t.Fatalf("材料 abcd01ef から作った ID が %q", id)
+	if id, err := task.NewID(bytes.NewReader([]byte{0xab, 0xcd, 0x01, 0xef})); err != nil || id != "abcd01ef" {
+		t.Fatalf("材料 abcd01ef から作った ID が %q（%v）", id, err)
 	}
 }
 
@@ -121,7 +121,11 @@ func TestIDの材料を読めなければ登録はエラーで何も登録しな
 	if _, err := o.Add("s", "t", ""); err == nil {
 		t.Fatal("材料が足りないのに登録できた")
 	}
-	if st, _ := oracle.ReadState(db); len(st.Tasks) != 0 {
+	st, err := oracle.ReadState(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Tasks) != 0 {
 		t.Fatalf("タスクが %d 個", len(st.Tasks))
 	}
 }

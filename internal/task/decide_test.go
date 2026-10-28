@@ -196,7 +196,10 @@ func checkFinish(t *testing.T, actor, id, reason string, k task.FinishKind, now 
 	if !ok {
 		t.Fatalf("モデルの書き込む内容が FinishWrite でない: %T", want.Dtor_value())
 	}
-	wid, _ := oracle.GoStr(w.Dtor_id())
+	wid, err := oracle.GoStr(w.Dtor_id())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ws, err := oracle.GoStatus(w.Dtor_status())
 	if err != nil {
 		t.Fatal(err)

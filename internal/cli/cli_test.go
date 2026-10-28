@@ -79,8 +79,11 @@ func (f *fixture) fail(args ...string) (string, string) {
 	if len(v) != 1 || len(v["error"]) != 2 {
 		f.t.Fatalf("%v: 失敗の出力の項目が error.code と error.message だけでない: %s", args, out)
 	}
-	c, _ := v["error"]["code"].(string)
-	m, _ := v["error"]["message"].(string)
+	c, cok := v["error"]["code"].(string)
+	m, mok := v["error"]["message"].(string)
+	if !cok || !mok {
+		f.t.Fatalf("%v: error.code か error.message が文字列でない: %s", args, out)
+	}
 	if c == "" || m == "" {
 		f.t.Fatalf("%v: code か message が空: %s", args, out)
 	}
@@ -98,7 +101,7 @@ func (f *fixture) code(want Code, args ...string) string {
 
 func (f *fixture) add(title string, extra ...string) map[string]any {
 	f.t.Helper()
-	return f.ok(append([]string{"task", "add", "--title", title}, extra...)...)["task"].(map[string]any)
+	return obj(f.t, f.ok(append([]string{"task", "add", "--title", title}, extra...)...)["task"])
 }
 
 func (f *fixture) show(id string) map[string]any { return f.ok("task", "show", id) }
@@ -107,7 +110,7 @@ func (f *fixture) show(id string) map[string]any { return f.ok("task", "show", i
 func Test本文のフラグを省くか値なしで最後に置くと本文は空になる(t *testing.T) {
 	f := newFixture(t)
 	for _, args := range [][]string{{"task", "add", "--title", "t"}, {"task", "add", "--title", "t", "--body"}} {
-		if b := f.ok(args...)["task"].(map[string]any)["body"]; b != "" {
+		if b := obj(t, f.ok(args...)["task"])["body"]; b != "" {
 			t.Fatalf("%v: 本文が %q", args, b)
 		}
 	}
@@ -128,12 +131,12 @@ func Testタイトルのフラグを省くか値なしで最後に置くとtitle
 // @assurance:evidence cli-reason-omitted
 func Test理由のフラグを省くか値なしで最後に置くと完了も中止もreason_requiredになる(t *testing.T) {
 	f := newFixture(t)
-	id := f.add("t")["id"].(string)
+	id := str(t, f.add("t")["id"])
 	for _, cmd := range []string{"done", "cancel"} {
 		f.code(CodeReasonRequired, "task", cmd, id)
 		f.code(CodeReasonRequired, "task", cmd, id, "--reason")
 	}
-	if st := f.show(id)["task"].(map[string]any)["status"]; st != "todo" {
+	if st := obj(t, f.show(id)["task"])["status"]; st != "todo" {
 		t.Fatalf("状態が %v", st)
 	}
 }
@@ -141,14 +144,14 @@ func Test理由のフラグを省くか値なしで最後に置くと完了も�
 // @assurance:evidence cli-list-all-flag
 func Test一覧はallの有無で終わったタスクを含めるかが変わる(t *testing.T) {
 	f := newFixture(t)
-	a := f.add("a")["id"].(string)
+	a := str(t, f.add("a")["id"])
 	f.now = f.now.Add(time.Second)
-	b := f.add("b")["id"].(string)
+	b := str(t, f.add("b")["id"])
 	f.ok("task", "done", b, "--reason", "r")
 	ids := func(v map[string]any) []string {
 		var r []string
-		for _, x := range v["tasks"].([]any) {
-			r = append(r, x.(map[string]any)["id"].(string))
+		for _, x := range arr(t, v["tasks"]) {
+			r = append(r, str(t, obj(t, x)["id"]))
 		}
 		return r
 	}
@@ -165,8 +168,8 @@ func Test主体はQUENTA_SESSIONの値をそのまま使いエージェント固
 	f := newFixture(t)
 	for _, s := range []string{" s 1 ", "\u3000x\t", "セッション"} {
 		f.env["QUENTA_SESSION"] = s
-		id := f.add("t")["id"].(string)
-		ev := f.show(id)["events"].([]any)[0].(map[string]any)
+		id := str(t, f.add("t")["id"])
+		ev := obj(t, arr(t, f.show(id)["events"])[0])
 		if ev["actor"] != s {
 			t.Fatalf("主体が %q（%q のはず）", ev["actor"], s)
 		}
@@ -186,16 +189,16 @@ func Test登録と完了と中止には操作の時点の日時を秒で渡しJS
 		t.Fatalf("作成日時が %v", tk["created_at"])
 	}
 	f.now = f.now.Add(65 * time.Second)
-	f.ok("task", "done", tk["id"].(string), "--reason", "r")
-	evs := f.show(tk["id"].(string))["events"].([]any)
-	if at := evs[1].(map[string]any)["at"]; at != "2026-10-27T12:36:01Z" {
+	f.ok("task", "done", str(t, tk["id"]), "--reason", "r")
+	evs := arr(t, f.show(str(t, tk["id"]))["events"])
+	if at := obj(t, evs[1])["at"]; at != "2026-10-27T12:36:01Z" {
 		t.Fatalf("完了の日時が %v", at)
 	}
 	f.now = f.now.Add(time.Second)
-	id2 := f.add("u")["id"].(string)
+	id2 := str(t, f.add("u")["id"])
 	f.now = f.now.Add(time.Second)
 	f.ok("task", "cancel", id2, "--reason", "r")
-	if at := f.show(id2)["events"].([]any)[1].(map[string]any)["at"]; at != "2026-10-27T12:36:03Z" {
+	if at := obj(t, arr(t, f.show(id2)["events"])[1])["at"]; at != "2026-10-27T12:36:03Z" {
 		t.Fatalf("中止の日時が %v", at)
 	}
 }
@@ -248,7 +251,7 @@ func Test主体とタイトルと理由が空白だけならデータのファ�
 func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒む(t *testing.T) {
 	bad := []string{"\xff", "a\xc3", "\xed\xa0\x80"} // 正しくないバイト、途中で切れた文字、サロゲートを表すバイト列
 	f := newFixture(t)
-	id := f.add("t")["id"].(string)
+	id := str(t, f.add("t")["id"])
 	for _, b := range bad {
 		for name, args := range map[string][]string{
 			"--title":  {"task", "add", "--title", b},
@@ -266,7 +269,7 @@ func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒�
 		}
 		f.env["QUENTA_SESSION"] = "s1"
 	}
-	if st := f.ok("task", "list", "--all")["tasks"].([]any); len(st) != 1 {
+	if st := arr(t, f.ok("task", "list", "--all")["tasks"]); len(st) != 1 {
 		t.Fatalf("拒んだのにタスクが %d 個", len(st))
 	}
 }
@@ -275,11 +278,11 @@ func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒�
 func Test引数の値は前後の空白も改行も含めてそのまま渡る(t *testing.T) {
 	f := newFixture(t)
 	for _, v := range []string{"  前後  ", "\n改行\n", "\t\u3000混ぜる\u2028", "x\r\n"} {
-		id := f.add(v, "--body", v)["id"].(string)
+		id := str(t, f.add(v, "--body", v)["id"])
 		f.ok("task", "done", id, "--reason", v)
 		got := f.show(id)
-		tk := got["task"].(map[string]any)
-		if tk["title"] != v || tk["body"] != v || got["events"].([]any)[1].(map[string]any)["reason"] != v {
+		tk := obj(t, got["task"])
+		if tk["title"] != v || tk["body"] != v || obj(t, arr(t, got["events"])[1])["reason"] != v {
 			t.Fatalf("値 %q が変わった: %v", v, got)
 		}
 	}
@@ -293,7 +296,7 @@ func Test一覧のJSONは一覧の判定が返したタスクをその順で漏�
 		if i%3 == 0 {
 			f.now = f.now.Add(time.Second)
 		}
-		id := f.add("t" + strconv.Itoa(i))["id"].(string)
+		id := str(t, f.add("t" + strconv.Itoa(i))["id"])
 		if i%4 == 0 {
 			f.ok("task", "done", id, "--reason", "r")
 		}
@@ -317,10 +320,13 @@ func Test一覧のJSONは一覧の判定が返したタスクをその順で漏�
 			args = append(args, "--all")
 		}
 		var got []task.Task
-		for _, x := range f.ok(args...)["tasks"].([]any) {
-			m := x.(map[string]any)
-			ts, _ := time.Parse(time.RFC3339, m["created_at"].(string))
-			got = append(got, task.Task{ID: m["id"].(string), Title: m["title"].(string), Body: m["body"].(string), Status: task.Status(m["status"].(string)), CreatedAt: ts.Unix()})
+		for _, x := range arr(t, f.ok(args...)["tasks"]) {
+			m := obj(t, x)
+			ts, err := time.Parse(time.RFC3339, str(t, m["created_at"]))
+			if err != nil {
+				t.Fatalf("作成日時が RFC 3339 でない: %v", err)
+			}
+			got = append(got, task.Task{ID: str(t, m["id"]), Title: str(t, m["title"]), Body: str(t, m["body"]), Status: task.Status(str(t, m["status"])), CreatedAt: ts.Unix()})
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("--all=%v: JSON %v、判定 %v", all, got, want)
@@ -335,11 +341,11 @@ func Test登録と完了と中止は書き込んだ後のタスクを返す(t *t
 	if a["status"] != "todo" || a["title"] != "a" || a["body"] != "b" {
 		t.Fatalf("登録の出力: %v", a)
 	}
-	d := f.ok("task", "done", a["id"].(string), "--reason", "r")["task"].(map[string]any)
+	d := obj(t, f.ok("task", "done", str(t, a["id"]), "--reason", "r")["task"])
 	if d["status"] != "done" || d["id"] != a["id"] || d["created_at"] != a["created_at"] {
 		t.Fatalf("完了の出力: %v", d)
 	}
-	c := f.ok("task", "cancel", f.add("c")["id"].(string), "--reason", "r")["task"].(map[string]any)
+	c := obj(t, f.ok("task", "cancel", str(t, f.add("c")["id"]), "--reason", "r")["task"])
 	if c["status"] != "canceled" {
 		t.Fatalf("中止の出力: %v", c)
 	}
@@ -362,29 +368,29 @@ func Testタスクとイベントの出力は決まった項目を持つ(t *test
 	if !slices.Equal(keys(a), taskKeys) {
 		t.Fatalf("登録のタスクの項目: %v", keys(a))
 	}
-	f.ok("task", "done", a["id"].(string), "--reason", "r")
+	f.ok("task", "done", str(t, a["id"]), "--reason", "r")
 	for _, args := range [][]string{{"task", "list", "--all"}} {
-		for _, x := range f.ok(args...)["tasks"].([]any) {
-			if !slices.Equal(keys(x.(map[string]any)), taskKeys) {
-				t.Fatalf("一覧のタスクの項目: %v", keys(x.(map[string]any)))
+		for _, x := range arr(t, f.ok(args...)["tasks"]) {
+			if !slices.Equal(keys(obj(t, x)), taskKeys) {
+				t.Fatalf("一覧のタスクの項目: %v", keys(obj(t, x)))
 			}
 		}
 	}
-	s := f.show(a["id"].(string))
-	if !slices.Equal(keys(s), []string{"events", "task"}) || !slices.Equal(keys(s["task"].(map[string]any)), taskKeys) {
+	s := f.show(str(t, a["id"]))
+	if !slices.Equal(keys(s), []string{"events", "task"}) || !slices.Equal(keys(obj(t, s["task"])), taskKeys) {
 		t.Fatalf("表示の項目: %v", s)
 	}
-	evs := s["events"].([]any)
+	evs := arr(t, s["events"])
 	for _, e := range evs {
-		if !slices.Equal(keys(e.(map[string]any)), []string{"actor", "at", "from", "reason", "to"}) {
+		if !slices.Equal(keys(obj(t, e)), []string{"actor", "at", "from", "reason", "to"}) {
 			t.Fatalf("イベントの項目: %v", e)
 		}
 	}
-	first := evs[0].(map[string]any)
+	first := obj(t, evs[0])
 	if first["from"] != nil || first["reason"] != "" {
 		t.Fatalf("登録のイベントの変更前は null、理由は空のはず: %v", first)
 	}
-	_, out := f.run("task", "show", a["id"].(string))
+	_, out := f.run("task", "show", str(t, a["id"]))
 	if !strings.Contains(out, `"from":null`) {
 		t.Fatalf("変更前が null と書かれていない: %s", out)
 	}
@@ -407,7 +413,7 @@ func Test引数の誤りはinvalid_argumentで何も変えない(t *testing.T) {
 // @assurance:evidence error-precedence
 func Test複数のエラーの条件が当てはまるときは決めた順の先のものを返す(t *testing.T) {
 	f := newFixture(t)
-	id := f.add("t")["id"].(string)
+	id := str(t, f.add("t")["id"])
 	f.ok("task", "done", id, "--reason", "r")
 	// --help はほかの条件より先
 	f.env["QUENTA_SESSION"] = ""
@@ -454,7 +460,7 @@ func Test複数のエラーの条件が当てはまるときは決めた順の�
 // @assurance:evidence cli-error-shape
 func Test失敗のJSONはerrorのcodeとmessageだけを持ちinvalid_argumentは誤った引数の名前を含む(t *testing.T) {
 	f := newFixture(t)
-	id := f.add("t")["id"].(string)
+	id := str(t, f.add("t")["id"])
 	f.ok("task", "done", id, "--reason", "r")
 	f.code(CodeTitleRequired, "task", "add", "--title", "")
 	f.code(CodeReasonRequired, "task", "done", id, "--reason", "")
@@ -550,18 +556,18 @@ func Testタイトルと本文と理由は長さを理由に拒まずOSの引数
 		}
 		return v
 	}
-	a := run("task", "add", "--title", long)["task"].(map[string]any)
-	b := run("task", "add", "--title", "t", "--body", long)["task"].(map[string]any)
-	run("task", "done", a["id"].(string), "--reason", long)
-	c := run("task", "add", "--title", "t")["task"].(map[string]any)
-	run("task", "cancel", c["id"].(string), "--reason", long)
-	if got := run("task", "show", a["id"].(string)); got["task"].(map[string]any)["title"] != long || got["events"].([]any)[1].(map[string]any)["reason"] != long {
+	a := obj(t, run("task", "add", "--title", long)["task"])
+	b := obj(t, run("task", "add", "--title", "t", "--body", long)["task"])
+	run("task", "done", str(t, a["id"]), "--reason", long)
+	c := obj(t, run("task", "add", "--title", "t")["task"])
+	run("task", "cancel", str(t, c["id"]), "--reason", long)
+	if got := run("task", "show", str(t, a["id"])); obj(t, got["task"])["title"] != long || obj(t, arr(t, got["events"])[1])["reason"] != long {
 		t.Fatal("長いタイトルか、完了の理由が変わった")
 	}
-	if got := run("task", "show", b["id"].(string)); got["task"].(map[string]any)["body"] != long {
+	if got := run("task", "show", str(t, b["id"])); obj(t, got["task"])["body"] != long {
 		t.Fatal("長い本文が変わった")
 	}
-	if got := run("task", "show", c["id"].(string)); got["events"].([]any)[1].(map[string]any)["reason"] != long {
+	if got := run("task", "show", str(t, c["id"])); obj(t, arr(t, got["events"])[1])["reason"] != long {
 		t.Fatal("長い中止の理由が変わった")
 	}
 }
@@ -636,7 +642,7 @@ func Testほかのセッションの書き込みを待ちきれなければbusy_
 // @assurance:evidence db-constraint-violation
 func Test書き込みをDBの制約が拒むとinternal_errorを返しタスクもイベントも変わらない(t *testing.T) {
 	f := newFixture(t)
-	id := f.add("t")["id"].(string)
+	id := str(t, f.add("t")["id"])
 	// テストの中でだけ、イベントの書き込みを拒むトリガーを足し、実装の書き込みを DB に拒ませる
 	db, err := sql.Open("sqlite", "file:"+f.data)
 	if err != nil {
@@ -660,8 +666,56 @@ func Test本番の乱数で作ったIDは16進の小文字8桁(t *testing.T) {
 	f.random = DefaultEnv(nil, nil, nil).Random // 本番と同じ乱数の元
 	re := regexp.MustCompile(`^[0-9a-f]{8}$`)
 	for range 20 {
-		if id := f.add("t")["id"].(string); !re.MatchString(id) {
+		if id := str(t, f.add("t")["id"]); !re.MatchString(id) {
 			t.Fatalf("ID の形が違う: %q", id)
+		}
+	}
+}
+
+// obj・arr・str は、JSON の値を、型を確かめて取り出す。型が違えば、値を書いて落とす
+func obj(t testing.TB, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("JSON のオブジェクトでない: %#v", v)
+	}
+	return m
+}
+
+func arr(t testing.TB, v any) []any {
+	t.Helper()
+	a, ok := v.([]any)
+	if !ok {
+		t.Fatalf("JSON の配列でない: %#v", v)
+	}
+	return a
+}
+
+func str(t testing.TB, v any) string {
+	t.Helper()
+	x, ok := v.(string)
+	if !ok {
+		t.Fatalf("JSON の文字列でない: %#v", v)
+	}
+	return x
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// @assurance:evidence output-json
+func Test結果を標準出力に書けなければ成功にせずinternal_errorを標準エラーに書く(t *testing.T) {
+	f := newFixture(t)
+	var errOut bytes.Buffer
+	env := Env{Getenv: func(k string) string { return f.env[k] }, Stdout: failingWriter{}, Stderr: &errOut, Now: func() time.Time { return f.now }, Random: f.random}
+	for _, args := range [][]string{{"task", "add", "--title", "t"}, {"task", "list"}, {"--help"}, {"task"}} {
+		errOut.Reset()
+		if code := Run(args, env); code == 0 {
+			t.Fatalf("%v: 標準出力に書けないのに終了コードが 0", args)
+		}
+		if args[0] == "task" && len(args) > 1 && !strings.Contains(errOut.String(), `"code":"internal_error"`) {
+			t.Fatalf("%v: 標準エラーに internal_error がない: %q", args, errOut.String())
 		}
 	}
 }

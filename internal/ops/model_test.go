@@ -186,7 +186,10 @@ func (h *harness) stepAdd() {
 		h.t.Fatalf("登録（%q, %q）: モデルは成功、実装は %v", actor, title, err)
 	}
 	h.adopt(want)
-	ts, _ := oracle.GoTasks(h.model.Dtor_tasks())
+	ts, err := oracle.GoTasks(h.model.Dtor_tasks())
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	if added := ts[len(ts)-1]; got != added {
 		h.t.Fatalf("登録の結果: モデルは %+v、実装は %+v", added, got)
 	}
@@ -216,7 +219,10 @@ func (h *harness) stepFinish(k task.FinishKind) {
 		h.t.Fatalf("完了・中止（%q, %q, %q）: モデルは成功、実装は %v", actor, id, reason, err)
 	}
 	h.adopt(want)
-	ts, _ := oracle.GoTasks(h.model.Dtor_tasks())
+	ts, err := oracle.GoTasks(h.model.Dtor_tasks())
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	for _, t := range ts {
 		if t.ID == id && t != got {
 			h.t.Fatalf("完了・中止の結果: モデルは %+v、実装は %+v", t, got)

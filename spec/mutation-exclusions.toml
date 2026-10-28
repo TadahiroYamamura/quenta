@@ -41,7 +41,7 @@ reason = "道具の誤認。定数の宣言は網羅率の区画に入らない�
 
 [[exclusion]]
 file = "internal/store/store.go"
-line = 85
+line = 84
 status = "NOT COVERED"
 column = 60
 type = "CONDITIONALS_BOUNDARY"
@@ -50,7 +50,7 @@ reason = "振る舞いの変わらない変異ではなく、テストの通ら�
 
 [[exclusion]]
 file = "internal/store/store.go"
-line = 85
+line = 84
 status = "NOT COVERED"
 column = 60
 type = "CONDITIONALS_NEGATION"
@@ -59,7 +59,7 @@ reason = "振る舞いの変わらない変異ではなく、テストの通ら�
 
 [[exclusion]]
 file = "internal/store/store.go"
-line = 113
+line = 112
 status = "LIVED"
 column = 8
 type = "CONDITIONALS_BOUNDARY"
@@ -68,7 +68,7 @@ reason = "v <= len(ms) にすると、当て済みのデータのファイルを
 
 [[exclusion]]
 file = "internal/store/store.go"
-line = 114
+line = 113
 status = "LIVED"
 column = 80
 type = "CONDITIONALS_NEGATION"
