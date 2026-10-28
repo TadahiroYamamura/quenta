@@ -29,6 +29,8 @@ tools: Read, Grep, Glob, Bash
 - `git add`・`git commit`・`git push`・`git stash`・`git checkout`・`git reset` など、git の状態を変えるコマンド
 - `gh issue create`・`gh issue comment` など、Issue への書き込み（記録は実装した AI が行う）
 - `nix flake update`・`nix flake lock`
+- コマンドをバックグラウンドで実行すること。前で実行し、結果を待つ。1 回の実行が長くなる実験は、壊す箇所ごとに分けて実行する。バックグラウンドで起動して自分の番を終えると、報告がないまま、実装した AI が待ち続けるため
+- 報告の表を返さずに終えること。実験が終わらなかった・確かめられなかったものは、そのことを表に書いて返す
 
 ## 報告
 次の表で返す。
