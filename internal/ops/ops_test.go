@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"errors"
+	"io"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -15,7 +16,7 @@ import (
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
 
-func newOps(t *testing.T, random *bytes.Reader) (*ops.Ops, *sql.DB) {
+func newOps(t *testing.T, random io.Reader) (*ops.Ops, *sql.DB) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "quenta.db")
 	s, err := store.Open(path)

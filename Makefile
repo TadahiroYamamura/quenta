@@ -1,4 +1,4 @@
-.PHONY: assurance assurance-test story-evidence docs docs-serve build install verify gen test mutation check
+.PHONY: assurance assurance-test story-evidence docs docs-serve build install verify gen test mutation check check-power
 
 PYTHON := python3 -I
 
@@ -64,3 +64,7 @@ mutation: gen
 	$(PYTHON) tools/mutation/check.py --root . $(foreach p,$(MUTATION_PKGS),$(p)=$(MUTATION_OUT)/$(notdir $(p)).json)
 
 check: assurance assurance-test verify test mutation
+
+# 実行時の確認の検出力を測る（完了の判断で PO に示す。make check には入れない）
+check-power: gen
+	tools/mutation/check_power.sh
