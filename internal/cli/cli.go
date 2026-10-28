@@ -84,6 +84,15 @@ func Run(args []string, env Env) int {
 	root.SetArgs(args)
 	root.SetOut(env.Stdout)
 	root.SetErr(io.Discard)
+	// --help・-h は、ほかの条件にかかわらず使い方を返す（主張 error-precedence）。cobra は、知らないフラグがあると --help より先に誤りにするので、先に見る
+	if hasHelpFlag(args) {
+		cmd, _, err := root.Find(args)
+		if err != nil {
+			cmd = root
+		}
+		cmd.Help()
+		return 0
+	}
 	err := root.Execute()
 	if err == nil {
 		return 0
@@ -98,6 +107,18 @@ func Run(args []string, env Env) int {
 	}
 	writeJSON(env.Stdout, errorOutput{Error: errorBody{Code: string(f.code), Message: f.message}})
 	return 1
+}
+
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
 }
 
 // dropValuelessLastFlag は、値をとるフラグが値なしで最後に置かれたら、そのフラグを省いたのと同じに扱う（主張 cli-title-omitted など）
