@@ -7,3 +7,5 @@ __pycache__/
 # make が生成する（Dafny から生成した Go と、ビルドしたバイナリ）
 /internal/spec/
 /bin/
+# make mutation の結果
+/.mutation/

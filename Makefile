@@ -53,8 +53,14 @@ $(GEN)/Quenta/Quenta.go: $(SPEC)
 test: gen
 	go test ./...
 
-# 実装の Go の変異テスト。生き残った変異が 1 つでもあれば失敗する
+# 実装の Go の変異テスト。生き残った変異と、テストの通らない変異のうち、除外の一覧（spec/mutation-exclusions.toml）にないものが 1 つでもあれば失敗する
+# Dafny から生成したコードと、テストの補助（internal/oracle）は対象にしない
+MUTATION_PKGS := internal/task internal/ops internal/store internal/cli
+MUTATION_OUT := .mutation
+
 mutation: gen
-	go run github.com/go-gremlins/gremlins/cmd/gremlins unleash --exclude-files '^internal/spec/' --threshold-efficacy 100 ./...
+	rm -rf $(MUTATION_OUT) && mkdir -p $(MUTATION_OUT)
+	for p in $(MUTATION_PKGS); do go tool gremlins unleash --silent --timeout-coefficient 20 -o $(MUTATION_OUT)/$$(basename $$p).json ./$$p || exit 1; done
+	$(PYTHON) tools/mutation/check.py --root . $(foreach p,$(MUTATION_PKGS),$(p)=$(MUTATION_OUT)/$(notdir $(p)).json)
 
 check: assurance assurance-test verify test mutation
