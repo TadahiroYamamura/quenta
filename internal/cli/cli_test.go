@@ -2,15 +2,15 @@ package cli
 
 import (
 	"bytes"
-	"io"
-	"regexp"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -614,6 +614,12 @@ func TestXDG_DATA_HOMEが使えなければHOMEの下に置きHOMEもなけれ�
 		}
 		f.env["HOME"] = ""
 		f.code(CodeInternalError, "task", "list")
+		// HOME が絶対パスでなければ、HOME がないのと同じ（#27）。カレントディレクトリに何も作らない
+		f.env["HOME"] = "relhome"
+		f.code(CodeInternalError, "task", "list")
+		if _, err := os.Stat("relhome"); !os.IsNotExist(err) {
+			t.Fatalf("カレントディレクトリに relhome ができた: %v", err)
+		}
 	}
 }
 
@@ -748,5 +754,33 @@ func Test結果を標準出力に書けなければ成功にせずinternal_error
 		if args[0] == "task" && len(args) > 1 && !strings.Contains(errOut.String(), `"code":"internal_error"`) {
 			t.Fatalf("%v: 標準エラーに internal_error がない: %q", args, errOut.String())
 		}
+	}
+}
+
+// @assurance:evidence invalid-argument
+// @assurance:evidence error-precedence
+func Test値なしで最後に置いたフラグはそのフラグを持つコマンドでだけ省いたのと同じに扱う(t *testing.T) {
+	f := newFixture(t)
+	id := str(t, f.add("t")["id"])
+	before := f.state()
+	// そのフラグを持たないコマンドや、-- の後に置いたものは、引数の誤り（#26）
+	for _, args := range [][]string{
+		{"task", "done", id, "--reason", "r", "--title"},
+		{"task", "cancel", id, "--reason", "r", "--body"},
+		{"task", "list", "--title"},
+		{"task", "show", id, "--body"},
+		{"task", "add", "--title", "x", "--", "--title"},
+		{"task", "done", id, "--title"},
+	} {
+		f.code(CodeInvalidArgument, args...)
+	}
+	if after := f.state(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("引数の誤りなのに中身が変わった\n前: %+v\n後: %+v", before, after)
+	}
+	// そのフラグを持つコマンドでは、省いたのと同じ
+	f.code(CodeTitleRequired, "task", "add", "--body", "b", "--title")
+	f.code(CodeReasonRequired, "task", "done", id, "--reason")
+	if b := obj(t, f.ok("task", "add", "--title", "t", "--body")["task"])["body"]; b != "" {
+		t.Fatalf("本文が %q", b)
 	}
 }

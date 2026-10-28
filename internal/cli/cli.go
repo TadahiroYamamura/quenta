@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -140,13 +141,22 @@ func hasHelpFlag(args []string) bool {
 	return false
 }
 
-// dropValuelessLastFlag は、値をとるフラグが値なしで最後に置かれたら、そのフラグを省いたのと同じに扱う（主張 cli-title-omitted など）
+// valueFlags は、サブコマンドごとの、値をとるフラグ
+var valueFlags = map[string][]string{
+	"add":    {"--title", "--body"},
+	"done":   {"--reason"},
+	"cancel": {"--reason"},
+}
+
+// dropValuelessLastFlag は、そのサブコマンドの値をとるフラグが、値なしで最後に置かれたら、そのフラグを省いたのと同じに扱う（主張 cli-title-omitted など）。
+// そのフラグを持たないサブコマンドや、-- の後に置かれたものは消さない（引数の誤りとして invalid_argument になる。#26）
 func dropValuelessLastFlag(args []string) []string {
-	if n := len(args); n > 0 {
-		switch args[n-1] {
-		case "--title", "--body", "--reason":
-			return args[:n-1]
-		}
+	n := len(args)
+	if n < 3 || args[0] != "task" || slices.Contains(args[:n-1], "--") {
+		return args
+	}
+	if slices.Contains(valueFlags[args[1]], args[n-1]) {
+		return args[:n-1]
 	}
 	return args
 }
@@ -344,10 +354,10 @@ func (c *command) dataPath() (string, error) {
 	if x := c.env.Getenv("XDG_DATA_HOME"); x != "" && filepath.IsAbs(x) {
 		return filepath.Join(x, "quenta", "quenta.db"), nil
 	}
-	if h := c.env.Getenv("HOME"); h != "" {
+	if h := c.env.Getenv("HOME"); h != "" && filepath.IsAbs(h) {
 		return filepath.Join(h, ".local", "share", "quenta", "quenta.db"), nil
 	}
-	return "", fail(CodeInternalError, "XDG_DATA_HOME が使えず、HOME もないので、データの置き場所が決まらない")
+	return "", fail(CodeInternalError, "XDG_DATA_HOME が使えず、HOME もないか絶対パスでないので、データの置き場所が決まらない")
 }
 
 func (c *command) open() (*ops.Ops, func() error, error) {

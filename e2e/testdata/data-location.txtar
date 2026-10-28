@@ -1,5 +1,5 @@
 # @assurance:evidence data-location
-# データは $XDG_DATA_HOME/quenta/（XDG_DATA_HOME が未設定か、空か、絶対パスでなければ ~/.local/share/quenta/）の下にだけ作られ、カレントディレクトリには何も作られない。macOS でも同じ。XDG_DATA_HOME が使えず、HOME もない（または空の）ときは、エラーコード internal_error を返す。使い方のテキストを返すときと、session_required・invalid_argument・title_required・reason_required を返すときは、データのファイルもディレクトリも作らない。それ以外のときは、登録・一覧・表示・完了・中止のどれも、データのファイルがなければ作る
+# データは $XDG_DATA_HOME/quenta/（XDG_DATA_HOME が未設定か、空か、絶対パスでなければ ~/.local/share/quenta/）の下にだけ作られ、カレントディレクトリには何も作られない。macOS でも同じ。XDG_DATA_HOME が使えず、HOME もないか、空か、絶対パスでないときは、エラーコード internal_error を返す。使い方のテキストを返すときと、session_required・invalid_argument・title_required・reason_required を返すときは、データのファイルもディレクトリも作らない。それ以外のときは、登録・一覧・表示・完了・中止のどれも、データのファイルがなければ作る
 # testscript は環境変数を消せないので、「未設定」「ない」は「空」で代えて確かめる（主張では、未設定・空・ないを同じに扱う）
 env QUENTA_SESSION=session-1
 env HOME=$WORK/home
@@ -31,6 +31,12 @@ rm $WORK/home/.local/share/quenta
 env HOME=
 ! exec quenta task list
 stderr '"code":"internal_error"'
+
+# XDG_DATA_HOME が使えず、HOME が絶対パスでなければ internal_error。カレントディレクトリに何も作らない
+env HOME=relhome
+! exec quenta task list
+stderr '"code":"internal_error"'
+! exists $WORK/cwd/relhome
 env HOME=$WORK/home
 
 # 使い方のテキストを返すときと、入力の誤りのときは、データのディレクトリを作らない
