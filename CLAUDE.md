@@ -195,6 +195,7 @@ Issue は、最初の要求と、議論の見える化に使う。① の質疑�
 | `modernc.org/sqlite` | SQLite | C コンパイラを要らなくするため |
 | `github.com/rogpeppe/go-internal` | E2E テストの台本（`testscript`） | シナリオを CLI のコマンドの並びとして、人が読める形で書くため。Go 本体のコマンドのテストでも使われている形 |
 | `github.com/spf13/cobra` | サブコマンド | サブコマンドを作るのが容易で、生成されるヘルプが読みやすい（AI もヘルプを読んで使い方を知る）。開発者が使い慣れている |
+| `actions/checkout` | GitHub Actions でリポジトリを取ってくる | GitHub 自身が出している。使わないと、git で取ってくる手順を自分で書くことになる |
 | `cachix/install-nix-action` | GitHub Actions で Nix を入れる | 手元と同じ `flake.lock` の版の道具で `make check` を動かせる。道具ごとの setup Action だと版を flake と二重に管理することになる |
 | `github.com/go-gremlins/gremlins` | AI が書いた Go の変異テスト | Go 1.26 で動くことを確かめた。go-mutesting（avito-tech）は Go 1.27 以上を要した |
 | Python、MkDocs、Material for MkDocs | 用語集を作り、手元で HTML として見る | Python は標準ライブラリだけで台帳（TOML）を読める。MkDocs は人が文書のビルドに指定した |
