@@ -67,12 +67,12 @@ func newHarness(t *testing.T, base, seed uint64) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	oracle.CloseLater(t, s)
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	oracle.CloseLater(t, db)
 	rnd := rand.New(rand.NewPCG(base, seed))
 	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, now: 1_700_000_000, outcome: map[string]int{}}
 	h.impl = &ops.Ops{Store: s, Random: h.ids, Now: func() int64 { return h.now }}

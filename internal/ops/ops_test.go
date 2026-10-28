@@ -23,12 +23,12 @@ func newOps(t *testing.T, random io.Reader) (*ops.Ops, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	oracle.CloseLater(t, s)
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	oracle.CloseLater(t, db)
 	return &ops.Ops{Store: s, Random: random, Now: func() int64 { return 100 }}, db
 }
 

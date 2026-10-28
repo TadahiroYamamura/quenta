@@ -28,12 +28,12 @@ func open(t *testing.T) (*store.Store, *sql.DB, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	oracle.CloseLater(t, s)
 	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { raw.Close() })
+	oracle.CloseLater(t, raw)
 	return s, raw, path
 }
 
@@ -65,7 +65,13 @@ func addWrite(id, title, body, actor string, now int64) task.AddWrite {
 // @assurance:evidence db-roundtrip
 func Testタスクとイベントは渡された値のまま保存され読み出しても変わらない(t *testing.T) {
 	s, raw, _ := open(t)
-	values := []string{" 前後に空白 ", "\u3000全角\u3000", "\t\n", "多言語 مرحبا 😀", strings.Repeat("長", 40000), "<&>\"'", ""}
+	var allSpaces []rune
+	for r := rune(0); r <= 0x3000; r++ {
+		if oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) { // 仕様が空白とする文字のすべて
+			allSpaces = append(allSpaces, r)
+		}
+	}
+	values := []string{" 前後に空白 ", "\u3000全角\u3000", "\t\n", string(allSpaces), "x" + string(allSpaces) + "x", "多言語 مرحبا 😀", strings.Repeat("長", 40000), "<&>\"'", ""}
 	for i, v := range values {
 		id := fmt.Sprintf("%08x", i)
 		w := addWrite(id, v+"題", v, v+"主体", int64(i))
@@ -259,7 +265,7 @@ func Testほかの接続が書き込み中なら待ち待ちきれなければEr
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer oracle.MustClose(t, conn)
 	if _, err := conn.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +374,7 @@ func Testデータのファイルを開けないときと知らない移行の�
 	if err := raw.QueryRow("SELECT count(*) FROM sqlite_master").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("表が %d 個できた（%v）", n, err)
 	}
-	raw.Close()
+	oracle.MustClose(t, raw)
 }
 
 // @assurance:evidence data-file-wal
@@ -389,14 +395,14 @@ func TestDBの構造は移行を全部当てた構造とschema_sqlから作っ�
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer fromSchema.Close()
+	defer oracle.MustClose(t, fromSchema)
 	mustExec(t, fromSchema, db.Schema)
 	read := func(d *sql.DB) []string {
 		rows, err := d.Query("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer oracle.MustClose(t, rows)
 		var r []string
 		for rows.Next() {
 			var a, b, c string
@@ -528,7 +534,10 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 			if err != nil {
 				continue // 判定がエラーを返した書き込みは、主張の外
 			}
-			mw := oracle.M.AddDecide(oracle.Str("a"), oracle.Str("題"), oracle.Str("本文"), oracle.Str(id), oracle.Int(5), taken).Dtor_value().(Q.AddWrite)
+			mw, ok := oracle.M.AddDecide(oracle.Str("a"), oracle.Str("題"), oracle.Str("本文"), oracle.Str(id), oracle.Int(5), taken).Dtor_value().(Q.AddWrite)
+			if !ok {
+				t.Fatal("モデルの登録の判定の結果が AddWrite でない")
+			}
 			want = oracle.M.ApplyAdd(ms, mw)
 			if err := s.Write(func(tx *store.Tx) error { return tx.ApplyAdd(w) }); err != nil {
 				t.Fatal(err)
@@ -548,7 +557,10 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 			if err != nil {
 				t.Fatal(err)
 			}
-			mw := oracle.M.FinishDecide(oracle.Str("a"), oracle.Str(id), oracle.Str("理由"), mk, oracle.Int(5), oracle.M.QueryTask(ms, oracle.Str(id))).Dtor_value().(Q.FinishWrite)
+			mw, ok := oracle.M.FinishDecide(oracle.Str("a"), oracle.Str(id), oracle.Str("理由"), mk, oracle.Int(5), oracle.M.QueryTask(ms, oracle.Str(id))).Dtor_value().(Q.FinishWrite)
+			if !ok {
+				t.Fatal("モデルの完了・中止の判定の結果が FinishWrite でない")
+			}
 			want = oracle.M.ApplyFinish(ms, mw)
 			if err := s.Write(func(tx *store.Tx) error { return tx.ApplyFinish(w) }); err != nil {
 				t.Fatal(err)
@@ -564,7 +576,6 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 	}
 }
 
-// @assurance:evidence internal-error
 func Test移行を当て済みのデータのファイルは開き直しても移行を当て直さず中身も変わらない(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "quenta.db")
 	for i := range 3 {
@@ -575,13 +586,13 @@ func Test移行を当て済みのデータのファイルは開き直しても�
 		if err := s.Write(func(tx *store.Tx) error { return tx.ApplyAdd(addWrite(fmt.Sprintf("%08x", i), "t", "", "a", 0)) }); err != nil {
 			t.Fatal(err)
 		}
-		s.Close()
+		oracle.MustClose(t, s)
 	}
 	raw, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer oracle.MustClose(t, raw)
 	var v int
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
 		t.Fatalf("移行の番号が %d（%v）", v, err)

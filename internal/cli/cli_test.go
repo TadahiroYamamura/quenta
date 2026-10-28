@@ -252,15 +252,22 @@ func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒�
 	bad := []string{"\xff", "a\xc3", "\xed\xa0\x80"} // 正しくないバイト、途中で切れた文字、サロゲートを表すバイト列
 	f := newFixture(t)
 	id := str(t, f.add("t")["id"])
+	before := f.state()
 	for _, b := range bad {
-		for name, args := range map[string][]string{
-			"--title":  {"task", "add", "--title", b},
-			"--body":   {"task", "add", "--title", "t", "--body", b},
-			"--reason": {"task", "done", id, "--reason", b},
-			"<ID>":     {"task", "show", b},
+		for _, c := range []struct {
+			name string
+			args []string
+		}{
+			{"--title", []string{"task", "add", "--title", b}},
+			{"--body", []string{"task", "add", "--title", "t", "--body", b}},
+			{"--reason", []string{"task", "done", id, "--reason", b}},
+			{"--reason", []string{"task", "cancel", id, "--reason", b}},
+			{"<ID>", []string{"task", "show", b}},
+			{"<ID>", []string{"task", "done", b, "--reason", "r"}},
+			{"<ID>", []string{"task", "cancel", b, "--reason", "r"}},
 		} {
-			if m := f.code(CodeInvalidArgument, args...); !strings.Contains(m, name) {
-				t.Errorf("message に %s がない: %s", name, m)
+			if m := f.code(CodeInvalidArgument, c.args...); !strings.Contains(m, c.name) {
+				t.Errorf("%v: message に %s がない: %s", c.args, c.name, m)
 			}
 		}
 		f.env["QUENTA_SESSION"] = "s" + b
@@ -269,8 +276,9 @@ func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒�
 		}
 		f.env["QUENTA_SESSION"] = "s1"
 	}
-	if st := arr(t, f.ok("task", "list", "--all")["tasks"]); len(st) != 1 {
-		t.Fatalf("拒んだのにタスクが %d 個", len(st))
+	// タスクもイベントも変わっていない
+	if after := f.state(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("拒んだのに中身が変わった\n前: %+v\n後: %+v", before, after)
 	}
 }
 
@@ -305,7 +313,7 @@ func Test一覧のJSONは一覧の判定が返したタスクをその順で漏�
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer oracle.MustClose(t, db)
 	st, err := oracle.ReadState(db)
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +376,12 @@ func Testタスクとイベントの出力は決まった項目を持つ(t *test
 	if !slices.Equal(keys(a), taskKeys) {
 		t.Fatalf("登録のタスクの項目: %v", keys(a))
 	}
-	f.ok("task", "done", str(t, a["id"]), "--reason", "r")
+	if d := obj(t, f.ok("task", "done", str(t, a["id"]), "--reason", "r")["task"]); !slices.Equal(keys(d), taskKeys) {
+		t.Fatalf("完了のタスクの項目: %v", keys(d))
+	}
+	if c := obj(t, f.ok("task", "cancel", str(t, f.add("c")["id"]), "--reason", "r")["task"]); !slices.Equal(keys(c), taskKeys) {
+		t.Fatalf("中止のタスクの項目: %v", keys(c))
+	}
 	for _, args := range [][]string{{"task", "list", "--all"}} {
 		for _, x := range arr(t, f.ok(args...)["tasks"]) {
 			if !slices.Equal(keys(obj(t, x)), taskKeys) {
@@ -424,9 +437,17 @@ func Test複数のエラーの条件が当てはまるときは決めた順の�
 	f.code(CodeSessionRequired, "task", "add", "--title", "", "--unknown")
 	f.code(CodeSessionRequired, "task", "show")
 	f.env["QUENTA_SESSION"] = "s1"
+	// session_required は title_required・reason_required より先（ふだん通る経路で、両方が当てはまる入力）
+	f.env["QUENTA_SESSION"] = " "
+	f.code(CodeSessionRequired, "task", "add", "--title", " ")
+	f.code(CodeSessionRequired, "task", "done", id, "--reason", " ")
+	f.code(CodeSessionRequired, "task", "cancel", "ffffffff", "--reason", " ")
+	f.env["QUENTA_SESSION"] = "s1"
 	// invalid_argument は title_required・reason_required より先
 	f.code(CodeInvalidArgument, "task", "add", "--title", "", "--unknown")
 	f.code(CodeInvalidArgument, "task", "done", "--reason", "")
+	f.code(CodeInvalidArgument, "task", "add", "--title", "", "--body", "\xff")
+	f.code(CodeInvalidArgument, "task", "done", "\xff", "--reason", "")
 	// reason_required は not_found・already_finished より先
 	f.code(CodeReasonRequired, "task", "done", "ffffffff", "--reason", "")
 	f.code(CodeReasonRequired, "task", "cancel", id, "--reason", "")
@@ -442,7 +463,7 @@ func Test複数のエラーの条件が当てはまるときは決めた順の�
 	if _, err := raw.Exec("PRAGMA user_version = 9999"); err != nil {
 		t.Fatal(err)
 	}
-	raw.Close()
+	oracle.MustClose(t, raw)
 	g.code(CodeTitleRequired, "task", "add", "--title", " ")
 	g.code(CodeReasonRequired, "task", "done", "ffffffff", "--reason", " ")
 	g.code(CodeUnsupportedDataVersion, "task", "done", "ffffffff", "--reason", "r")
@@ -470,9 +491,16 @@ func Test失敗のJSONはerrorのcodeとmessageだけを持ちinvalid_argument�
 		"--unknown": {"task", "add", "--title", "t", "--unknown"},
 		"extra":     {"task", "list", "extra"},
 		"frob":      {"task", "frob"},
+		"<ID>":      {"task", "show"},
 	} {
 		if m := f.code(CodeInvalidArgument, args...); !strings.Contains(m, arg) {
 			t.Errorf("invalid_argument の message に %q がない: %s", arg, m)
+		}
+	}
+	// ID の引数がない・多いときも、message は <ID> を含む（#25）
+	for _, args := range [][]string{{"task", "show"}, {"task", "show", "a", "b"}, {"task", "done", "--reason", "r"}, {"task", "cancel", "a", "b", "--reason", "r"}} {
+		if m := f.code(CodeInvalidArgument, args...); !strings.Contains(m, "<ID>") {
+			t.Errorf("%v: invalid_argument の message に <ID> がない: %s", args, m)
 		}
 	}
 	f.env["QUENTA_SESSION"] = ""
@@ -592,7 +620,7 @@ func (f *fixture) state() oracle.State {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	defer db.Close()
+	defer oracle.MustClose(f.t, db)
 	st, err := oracle.ReadState(db)
 	if err != nil {
 		f.t.Fatal(err)
@@ -621,12 +649,12 @@ func Testほかのセッションの書き込みを待ちきれなければbusy_
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer oracle.MustClose(t, db)
 	conn, err := db.Conn(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer oracle.MustClose(t, conn)
 	if _, err := conn.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +679,7 @@ func Test書き込みをDBの制約が拒むとinternal_errorを返しタスク�
 	if _, err := db.Exec("CREATE TRIGGER test_reject_events BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'test_reject_events'); END"); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	oracle.MustClose(t, db)
 	before := f.state()
 	f.code(CodeInternalError, "task", "add", "--title", "u")
 	f.code(CodeInternalError, "task", "done", id, "--reason", "r")
