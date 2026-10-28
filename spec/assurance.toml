@@ -717,12 +717,12 @@ detail = "エラーコードの全種類を起こし、JSON の項目が error.c
 [[claim]]
 id = "output-json"
 subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
-statement = "出力は JSON。失敗したときも JSON でエラーコードを返し、終了コードは 0 以外になる。ただし、--help か -h を指定したときと、quenta・quenta task をサブコマンドなしで起動したときは、使い方のテキストを返し、終了コードは 0 になる"
+statement = "出力は JSON。成功したときは標準出力に JSON を書く。失敗したときは標準エラーに JSON でエラーコードを書き、標準出力には何も書かず、終了コードは 0 以外になる。ただし、--help か -h を指定したときと、quenta・quenta task をサブコマンドなしで起動したときは、使い方のテキストを標準出力に返し、終了コードは 0 になる"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "CLI のインターフェースのテスト"
-detail = "成功・失敗・--help の出力と終了コード"
+detail = "成功・失敗・--help の出力と終了コード。成功で標準エラーに、失敗で標準出力に何も書かないこと"
 
 [[claim.evidence]]
 stage = "テスト"
