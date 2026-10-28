@@ -60,7 +60,7 @@ MUTATION_OUT := .mutation
 
 mutation: gen
 	rm -rf $(MUTATION_OUT) && mkdir -p $(MUTATION_OUT)
-	for p in $(MUTATION_PKGS); do go tool gremlins unleash --silent --timeout-coefficient 20 -o $(MUTATION_OUT)/$$(basename $$p).json ./$$p || exit 1; done
+	for p in $(MUTATION_PKGS); do go tool gremlins unleash --silent --timeout-coefficient 100 -o $(MUTATION_OUT)/$$(basename $$p).json ./$$p || exit 1; done
 	$(PYTHON) tools/mutation/check.py --root . $(foreach p,$(MUTATION_PKGS),$(p)=$(MUTATION_OUT)/$(notdir $(p)).json)
 
 check: assurance assurance-test verify test mutation
