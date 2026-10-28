@@ -342,7 +342,7 @@ func Test書き込みの途中でエラーになるとその操作の書き込�
 }
 
 // @assurance:evidence internal-error
-func Testデータのファイルを開けないときと新しい版のデータのファイルはエラーで何も変えない(t *testing.T) {
+func Testデータのファイルを開けないときと知らない移行の番号のデータのファイルはエラーで何も変えない(t *testing.T) {
 	dir := t.TempDir()
 	broken := filepath.Join(dir, "broken", "quenta.db")
 	if err := os.MkdirAll(broken, 0o700); err != nil {
@@ -358,7 +358,7 @@ func Testデータのファイルを開けないときと新しい版のデー�
 	}
 	mustExec(t, raw, "PRAGMA user_version = 9999")
 	if _, err := store.Open(newer); !errors.Is(err, store.ErrUnsupportedVersion) {
-		t.Fatalf("新しい版のデータのファイルを開くと %v", err)
+		t.Fatalf("知らない移行の番号のデータのファイルを開くと %v", err)
 	}
 	var v int
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 9999 {

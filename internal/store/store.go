@@ -27,8 +27,8 @@ import (
 const BusyTimeout = 5 * time.Second
 
 var (
-	// ErrUnsupportedVersion は、この版の知らない移行が当たったデータのファイル（新しい版の quenta が作ったもの）
-	ErrUnsupportedVersion = errors.New("データのファイルは、新しい版の quenta が作ったもの")
+	// ErrUnsupportedVersion は、この quenta の知らない移行が当たったデータのファイル（user_version の移行の番号が、知っている最大の番号より大きい）
+	ErrUnsupportedVersion = errors.New("データのファイルに、この quenta の知らない移行が当たっている")
 	// ErrBusy は、ほかのセッションの書き込みを待ちきれなかったこと
 	ErrBusy = errors.New("ほかのセッションの書き込みを待ちきれなかった")
 )
