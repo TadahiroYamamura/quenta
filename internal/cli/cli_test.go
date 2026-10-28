@@ -248,6 +248,7 @@ func Test主体とタイトルと理由が空白だけならデータのファ�
 }
 
 // @assurance:evidence cli-invalid-utf8
+// @assurance:evidence cli-error-shape
 func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒む(t *testing.T) {
 	bad := []string{"\xff", "a\xc3", "\xed\xa0\x80"} // 正しくないバイト、途中で切れた文字、サロゲートを表すバイト列
 	f := newFixture(t)
@@ -271,8 +272,10 @@ func Test正しくないUTF8の引数とQUENTA_SESSIONはinvalid_argumentで拒�
 			}
 		}
 		f.env["QUENTA_SESSION"] = "s" + b
-		if m := f.code(CodeInvalidArgument, "task", "list"); !strings.Contains(m, "QUENTA_SESSION") {
-			t.Errorf("message に QUENTA_SESSION がない: %s", m)
+		for _, args := range [][]string{{"task", "list"}, {"task", "add", "--title", "t"}, {"task", "done", id, "--reason", "r"}, {"task", "cancel", id, "--reason", "r"}, {"task", "show", id}} {
+			if m := f.code(CodeInvalidArgument, args...); !strings.Contains(m, "QUENTA_SESSION") {
+				t.Errorf("%v: message に QUENTA_SESSION がない: %s", args, m)
+			}
 		}
 		f.env["QUENTA_SESSION"] = "s1"
 	}
