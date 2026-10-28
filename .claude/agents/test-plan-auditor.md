@@ -1,6 +1,6 @@
 ---
 name: test-plan-auditor
-description: quenta のテストの監査の 1 段目。台帳で予定したテストが、予定どおりに書けているかを、実装した者とは別の立場で点検する。implement-story スキルの 3 の点検で、最初に使う。
+description: quenta のテストの監査の 1 段目。台帳で予定したテストが、予定どおりに書けているかを、実装した者とは別の立場で点検する。implement-story スキルの 3 の点検で、2 段目・3 段目と同時に使う。
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -8,6 +8,8 @@ tools: Read, Grep, Glob, Bash
 
 ## 受け取るもの
 - ストーリーの Issue の番号（`gh issue view <番号> --comments -R TadahiroYamamura/quenta` で読む）
+- 点検するコミットと、そのコミットで実装した AI が実行した `make check` の出力のファイル。まず `git rev-parse HEAD` が渡されたコミットと同じで、作業ツリーに変更がないこと（`git status --short`）を確かめる。違えば点検せず、そのことを報告する
+- `make check` は自分で実行しない。結果は渡された出力を読む。ほかの監査と同時に動くので、変異テストのような重い処理を重ねないため。個別のテストを確かめたいときは、`go test -run <名前>` のように絞って実行する
 
 ## 確かめること
 `make story-evidence ISSUE=<番号>` の対象の主張と、その裏付けの予定（台帳の `evidence`）を 1 件ずつ見る。
@@ -18,7 +20,7 @@ tools: Read, Grep, Glob, Bash
 4. **念入りにした機能のモデルベーステストとプロパティベーステスト**（`CLAUDE.md` の「モデルベーステストとプロパティベーステスト」）: 事前条件の各条件について、それを満たす入力と、境界の入力が作られているか。ほかの機能の操作を混ぜていないか
 5. **E2E テストの台本**: ビルドした CLI を実際に呼んでいるか。独自のコマンドが、`CLAUDE.md` の「E2E テストの台本」の表にあり、判定を行っていないか
 6. **実行時の確認**: `@assurance:check` の印の付いた関数が、台帳の `detail` に書いた何を・いつ・どこから確かめているか
-7. **完了の条件と実行の結果**: `CLAUDE.md` の「ストーリーの完了の条件」がそろっているか。`make check` と `make story-evidence ISSUE=<番号>` を自分で実行し、通るか。macOS での結果は、GitHub Actions の実行結果（`gh run list -R TadahiroYamamura/quenta`、`gh run view`）で確かめる
+7. **完了の条件と実行の結果**: `CLAUDE.md` の「ストーリーの完了の条件」がそろっているか。渡された `make check` の出力で、すべて通っているか。`make story-evidence ISSUE=<番号>` は軽いので、自分で実行して通るかを確かめる。macOS での結果は、GitHub Actions の実行結果（`gh run list -R TadahiroYamamura/quenta`、`gh run view`）で確かめる
 
 ## 禁止する操作
 - リポジトリの作業ツリーのファイルを変更すること。壊す実験は、`mktemp -d` で作った一時ディレクトリの複製の中だけで行い、終わったら消す（変異テストの道具が作業ツリーを書き換える作りなら、道具もその複製の中で動かす）
