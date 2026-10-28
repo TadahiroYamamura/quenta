@@ -86,7 +86,7 @@ reason = "|| を && にすると、タスクが見つからない（t が nil �
 
 [[exclusion]]
 file = "internal/cli/cli.go"
-line = 403
+line = 439
 column = 16
 type = "INVERT_LOGICAL"
 status = "LIVED"

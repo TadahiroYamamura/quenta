@@ -122,6 +122,7 @@ func Test本文のフラグを省くか値なしで最後に置くと本文は�
 func Testタイトルのフラグを省くか値なしで最後に置くとtitle_requiredになる(t *testing.T) {
 	f := newFixture(t)
 	f.code(CodeTitleRequired, "task", "add")
+	f.code(CodeTitleRequired, "task", "add", "--title") // 引数が 3 つちょうどのとき
 	f.code(CodeTitleRequired, "task", "add", "--body", "b")
 	f.code(CodeTitleRequired, "task", "add", "--body", "b", "--title")
 	f.code(CodeTitleRequired, "task", "add", "--title=")
@@ -803,4 +804,35 @@ func Test値なしで最後に置いたフラグはそのフラグを持つコ�
 	if b := obj(t, f.ok("task", "add", "--title", "t", "--body")["task"])["body"]; b != "" {
 		t.Fatalf("本文が %q", b)
 	}
+}
+
+// @assurance:evidence invalid-argument
+func Test同じフラグを2回以上指定するとinvalid_argumentで何も変えない(t *testing.T) {
+	f := newFixture(t)
+	id := str(t, f.add("t")["id"])
+	before := f.state()
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"--title", []string{"task", "add", "--title", "a", "--title", "b"}},
+		{"--title", []string{"task", "add", "--title", "x", "--title"}},
+		{"--title", []string{"task", "add", "--title=a", "--title", "b"}},
+		{"--body", []string{"task", "add", "--title", "t", "--body", "a", "--body", "b"}},
+		{"--reason", []string{"task", "done", id, "--reason", "r1", "--reason", "r2"}},
+		{"--reason", []string{"task", "cancel", id, "--reason", "r1", "--reason"}},
+		{"--all", []string{"task", "list", "--all", "--all"}},
+	} {
+		if m := f.code(CodeInvalidArgument, c.args...); !strings.Contains(m, c.name) {
+			t.Errorf("%v: message に %s がない: %s", c.args, c.name, m)
+		}
+	}
+	if after := f.state(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("引数の誤りなのに中身が変わった\n前: %+v\n後: %+v", before, after)
+	}
+	// -- の後は位置の引数なので、数えない（余分な位置の引数として invalid_argument）
+	f.code(CodeInvalidArgument, "task", "add", "--title", "t", "--", "--title")
+	// 主体が空白だけなら、session_required が先
+	f.env["QUENTA_SESSION"] = " "
+	f.code(CodeSessionRequired, "task", "add", "--title", "a", "--title", "b")
 }

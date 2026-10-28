@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -80,6 +81,7 @@ func DefaultEnv(getenv func(string) string, stdout, stderr io.Writer) Env {
 
 // Run は、quenta を args（コマンド名を除く）で動かし、終了コードを返す
 func Run(args []string, env Env) int {
+	repeated := args // 同じフラグを 2 回以上指定したかは、値なしの最後のフラグを省く前の引数で数える
 	args = dropValuelessLastFlag(args)
 	// cobra は、使い方を書けなかったことを返さないので、書き込みの誤りを見張る
 	out := &watchedWriter{w: env.Stdout}
@@ -104,7 +106,12 @@ func Run(args []string, env Env) int {
 		}
 		return 0
 	}
-	err := root.Execute()
+	var err error
+	if name, ok := repeatedFlag(repeated); ok {
+		err = fmt.Errorf("%s を 2 回以上指定した", name)
+	} else {
+		err = root.Execute()
+	}
 	if err == nil && out.err != nil {
 		err = fail(CodeInternalError, "標準出力に書けない: %v", out.err)
 	}
@@ -139,6 +146,25 @@ func hasHelpFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+// repeatedFlag は、-- より前で、同じフラグ（--name と --name=値 の形）を 2 回以上指定していれば、その名前を返す（主張 invalid-argument）
+func repeatedFlag(args []string) (string, bool) {
+	seen := map[string]bool{}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if !strings.HasPrefix(a, "--") {
+			continue
+		}
+		name, _, _ := strings.Cut(a, "=")
+		if seen[name] {
+			return name, true
+		}
+		seen[name] = true
+	}
+	return "", false
 }
 
 // valueFlags は、サブコマンドごとの、値をとるフラグ
