@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/TadahiroYamamura/quenta/internal/oracle"
+	_dafny "github.com/TadahiroYamamura/quenta/internal/spec/dafny"
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
 
@@ -209,7 +210,7 @@ func Testモデルのエラーはすべて同じ名前のエラーコードに�
 func Test主体とタイトルと理由が空白だけならデータのファイルを開かずにエラーを返す(t *testing.T) {
 	var spaces []string
 	for r := rune(0); r <= 0x3000; r++ {
-		if task.IsWhiteSpace(r) {
+		if oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) { // 仕様が空白とする文字。実装の判定から作らない
 			spaces = append(spaces, string(r))
 		}
 	}
@@ -646,6 +647,7 @@ func Test書き込みをDBの制約が拒むとinternal_errorを返しタスク�
 // @assurance:evidence task-id-format
 func Test本番の乱数で作ったIDは16進の小文字8桁(t *testing.T) {
 	f := newFixture(t)
+	f.random = DefaultEnv(nil, nil).Random // 本番と同じ乱数の元
 	re := regexp.MustCompile(`^[0-9a-f]{8}$`)
 	for range 20 {
 		if id := f.add("t")["id"].(string); !re.MatchString(id) {

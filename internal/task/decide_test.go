@@ -12,11 +12,11 @@ import (
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
 
-// whiteSpaces は、Unicode の White_Space の文字のすべて
+// whiteSpaces は、仕様（spec/quenta.dfy の IsWhiteSpace）が空白とする文字のすべて。実装の判定から作らない（実装が誤れば、入力も一緒にずれるため）
 var whiteSpaces = func() []rune {
 	var rs []rune
 	for r := rune(0); r <= 0x3000; r++ {
-		if task.IsWhiteSpace(r) {
+		if oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) {
 			rs = append(rs, r)
 		}
 	}

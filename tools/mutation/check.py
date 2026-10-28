@@ -4,7 +4,7 @@
 
 生き残った変異（LIVED）と、テストが通らない変異（NOT COVERED）のうち、除外の一覧にないものが 1 つでもあれば、終了コード 1 で終わる。
 除外の一覧の行は、場所・変異の種類・結果の種類（status）まで一致したものにだけ当てる。ソースの文が今の行と一致しないもの、結果に現れないもの（もう要らない除外か、結果の種類が変わったもの）も、誤りとして挙げる。
-時間切れ（TIMED OUT）は、テストが変異で止まらなくなったことを捕まえたものとして、殺した変異と同じに扱う。
+時間切れ（TIMED OUT）も誤りとして挙げる。手元が重いと、テストが判定していなくても時間切れになり、捕まえたように見えるため。
 """
 
 import argparse
@@ -14,6 +14,7 @@ import sys
 import tomllib
 
 FAILING = ("LIVED", "NOT COVERED")
+TIMED_OUT = "TIMED OUT"
 
 
 def main():
@@ -29,12 +30,17 @@ def main():
         if not (1 <= e["line"] <= len(lines)) or lines[e["line"] - 1].strip() != e["code"]:
             errors.append(f"除外 {e['file']}:{e['line']} の code が、今のソースの行と一致しない（行がずれたか、ソースが変わった）")
     used = set()
+    counts = {}
     for arg in args.results:
         pkg, result = arg.split("=", 1)
         data = json.loads(pathlib.Path(result).read_text(encoding="utf-8"))
         for f in data.get("files", []):
             path = f"{pkg}/{f['file_name']}"
             for m in f.get("mutations", []):
+                counts[m["status"]] = counts.get(m["status"], 0) + 1
+                if m["status"] == TIMED_OUT:
+                    errors.append(f"TIMED OUT {m['type']} at {path}:{m['line']}:{m['column']}（時間切れ。手元が重ければ、動かし直す）")
+                    continue
                 if m["status"] not in FAILING:
                     continue
                 key = (path, m["line"], m["column"], m["type"], m["status"])
@@ -46,6 +52,7 @@ def main():
     for i, e in enumerate(exclusions):
         if i not in used:
             errors.append(f"除外 {e['file']}:{e['line']}:{e['column']} {e['type']} {e['status']} は、結果に現れない（もう要らない除外か、結果の種類が変わった）")
+    print("変異の結果: " + "、".join(f"{k} {v}" for k, v in sorted(counts.items())))
     for e in errors:
         print(e, file=sys.stderr)
     return 1 if errors else 0
