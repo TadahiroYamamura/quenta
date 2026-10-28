@@ -120,7 +120,7 @@ definition = "リポジトリから quenta を入れる（make install）"
 id = "task-add-saves-todo"
 subjects = ["task-add", "task", "task-status"]
 statement = "タイトルと本文を渡して登録すると、状態が todo のタスクが 1 つ加わる。タイトルと本文は、渡された値のまま（前後の空白を含む）。作成日時は、渡された日時"
-condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+condition = "登録のエラーの条件（主張 session-required・task-add-title-required・task-add-id-taken）のどれにも当てはまらないとき"
 
 [[claim.evidence]]
 stage = "計画"
@@ -166,7 +166,7 @@ detail = "空白だけのタイトル（空白の文字を組み合わせたも�
 id = "task-add-records-event"
 subjects = ["task-add", "event"]
 statement = "登録すると、主体・変更前なし・変更後 todo・日時を持ち、理由が空のイベントが 1 件記録される。そのイベントの日時は、渡された日時（タスクの作成日時と同じ）"
-condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+condition = "登録のエラーの条件（主張 session-required・task-add-title-required・task-add-id-taken）のどれにも当てはまらないとき"
 
 [[claim.evidence]]
 stage = "計画"
@@ -265,7 +265,7 @@ detail = "作成日時が同じタスクを含む集まりを直接作り、並�
 id = "task-done-sets-done"
 subjects = ["task-done", "task-status", "event"]
 statement = "理由を渡して todo のタスクを完了にすると、状態が done になり、主体・変更前 todo・変更後 done・理由・日時のイベントが 1 件記録される。理由は、渡された値のまま（前後の空白を含む）。日時は、渡された日時"
-condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+condition = "完了・中止のエラーの条件（主張 session-required・finish-reason-required・task-not-found・finished-task-unchangeable）のどれにも当てはまらないとき"
 
 [[claim.evidence]]
 stage = "計画"
@@ -281,7 +281,7 @@ detail = "登録・一覧・完了・中止の操作の列を、モデルと実�
 id = "task-cancel-sets-canceled"
 subjects = ["task-cancel", "task-status", "event"]
 statement = "理由を渡して todo のタスクを中止にすると、状態が canceled になり、主体・変更前 todo・変更後 canceled・理由・日時のイベントが 1 件記録される。理由は、渡された値のまま（前後の空白を含む）。日時は、渡された日時"
-condition = "エラーの条件（主張 session-required・task-add-title-required・finish-reason-required・task-not-found・finished-task-unchangeable・task-add-id-taken）のどれにも当てはまらないとき"
+condition = "完了・中止のエラーの条件（主張 session-required・finish-reason-required・task-not-found・finished-task-unchangeable）のどれにも当てはまらないとき"
 
 [[claim.evidence]]
 stage = "計画"
@@ -777,12 +777,22 @@ detail = "読み出しと書き込みが同じトランザクションにある�
 [[claim]]
 id = "db-facts-as-read"
 subjects = ["data-file", "task-add", "task-list", "task-done", "task-cancel"]
-statement = "モデルの判定に渡す事実（指定した ID のタスクとその状態、ID が登録済みか、一覧の元になるタスクの集まり）は、データのファイルから読んだまま渡す。読み落としも、読んだ値の書き換えもしない"
+statement = "実装の判定に渡す事実（ID が登録済みか、指定した ID のタスク（なければ「なし」）、一覧の元になるタスクの全体）は、DB のモデルの問い合わせが同じデータに対して返す値と一致する"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "DB に直接入れた行と、読み出してモデルに渡す事実（タスクの有無と状態、ID が登録済みか、一覧の元の集まり）が一致すること"
+detail = "無作為な DB の中身を作り、実装の問い合わせの結果と、同じ中身を写したモデルの問い合わせ（QueryIdTaken・QueryTask・QueryTasks）の結果を比べる"
+
+[[claim]]
+id = "db-writes-as-model"
+subjects = ["data-file", "task-add", "task-done", "task-cancel"]
+statement = "実装の書き込みは、DB のモデルの書き込みと同じ変化をデータに起こす。登録は、タスクとイベントを 1 つずつ足すだけ。完了・中止は、指定したタスクの状態を変え、イベントを 1 件足すだけ"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "無作為な DB の中身に実装で書き込み、書き込んだ後の DB を、同じ中身を写したモデルの書き込み（ApplyAdd・ApplyFinish）の結果と比べる"
 
 [[claim]]
 id = "db-busy"
