@@ -77,7 +77,7 @@ func (f Failure) Error() string {
 	return "判定の知らないエラー"
 }
 
-// IsWhiteSpace は、Unicode 15.1 で White_Space の性質を持つ文字かを返す（spec/quenta.dfy の IsWhiteSpace と同じ一覧）
+// IsWhiteSpace は、Unicode の White_Space の性質を持つ文字かを返す（spec/quenta.dfy の IsWhiteSpace と同じ一覧）。unicode.White_Space を使わないのは、Go の版で Unicode の版が変わっても、仕様と食い違わないようにするため
 func IsWhiteSpace(r rune) bool {
 	return (0x0009 <= r && r <= 0x000D) || r == 0x0020 || r == 0x0085 || r == 0x00A0 || r == 0x1680 ||
 		(0x2000 <= r && r <= 0x200A) || r == 0x2028 || r == 0x2029 || r == 0x202F || r == 0x205F ||

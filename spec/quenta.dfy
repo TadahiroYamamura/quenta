@@ -37,7 +37,7 @@ module Quenta {
 
   const Empty := State([], [])
 
-  // Unicode の White_Space の性質を持つ文字（Unicode 15.1 の PropList.txt）
+  // Unicode の White_Space の性質を持つ文字。Go 1.26 の unicode パッケージ（Unicode 15.0.0）の White_Space の表と、U+0000〜U+10FFFF のすべての文字で一致することを確かめた（2026-10-28）
   predicate IsWhiteSpace(c: char) {
     ('\U{0009}' <= c <= '\U{000D}') || c == '\U{0020}' || c == '\U{0085}' || c == '\U{00A0}' || c == '\U{1680}'
     || ('\U{2000}' <= c <= '\U{200A}') || c == '\U{2028}' || c == '\U{2029}' || c == '\U{202F}' || c == '\U{205F}'
