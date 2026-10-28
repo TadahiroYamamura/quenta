@@ -655,12 +655,22 @@ detail = "引数の誤りの種類ごと"
 [[claim]]
 id = "error-precedence"
 subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
-statement = "--help か -h を指定したときは、ほかの条件にかかわらず使い方のテキストを返す（主張「出力は JSON」の例外）。複数のエラーの条件が当てはまるときは、session_required、invalid_argument、title_required・reason_required、unsupported_data_version、internal_error、not_found、already_finished、id_conflict の順で、先に当てはまったものを返す。ただし、書き込みの途中で起きた internal_error は、起きた時点で返す"
+statement = "--help か -h を指定したときは、ほかの条件にかかわらず使い方のテキストを返す（主張「出力は JSON」の例外）。複数のエラーの条件が当てはまるときは、session_required、invalid_argument、title_required・reason_required、unsupported_data_version、internal_error、not_found、already_finished、id_conflict の順で、先に当てはまったものを返す。ただし、書き込みの途中で起きた internal_error と、busy_timeout は、起きた時点で返す"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "CLI のインターフェースのテスト"
 detail = "複数のエラーの条件が当てはまる引数と環境"
+
+[[claim]]
+id = "cli-error-shape"
+subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
+statement = "失敗したときの JSON は、項目 error だけを持ち、その中に code（エラーコード）と message（何が起きたかの説明の文）の 2 つの項目を持つ。invalid_argument の message は、誤った引数や環境変数の名前（--title、ID、QUENTA_SESSION など）を含む。message の文言は、ほかには決めない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "CLI のインターフェースのテスト"
+detail = "エラーコードの全種類を起こし、JSON の項目が error.code と error.message だけであること。invalid_argument は、誤りの種類ごと（QUENTA_SESSION が正しくない UTF-8 の場合を含む）に、message が誤った引数や環境変数の名前を含むこと"
 
 [[claim]]
 id = "output-json"
@@ -777,7 +787,7 @@ detail = "DB に直接入れた行と、読み出してモデルに渡す事実�
 [[claim]]
 id = "db-busy"
 subjects = ["data-file", "error-code"]
-statement = "ほかのセッションが書き込み中なら、終わるまで待つ。決めた時間を待っても書き込めなければ、エラーコード internal_error を返す。タスクもイベントも変えない"
+statement = "ほかのセッションが書き込み中なら、終わるまで待つ。決めた時間を待っても書き込めなければ、エラーコード busy_timeout を返す。タスクもイベントも変えない"
 
 [[claim.evidence]]
 stage = "テスト"
@@ -807,7 +817,7 @@ detail = "書き込みの途中で失敗させ、何も残らないこと"
 [[claim]]
 id = "internal-error"
 subjects = ["error-code", "data-file", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
-statement = "データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤りなら、エラーコード internal_error を返す。新しい版の quenta が作ったデータのファイルは開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）"
+statement = "データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤り（ほかのセッションの書き込みを待ちきれなかった場合を除く。主張 db-busy）なら、エラーコード internal_error を返す。新しい版の quenta が作ったデータのファイルは開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）"
 
 [[claim.evidence]]
 stage = "テスト"
