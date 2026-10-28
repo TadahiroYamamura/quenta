@@ -74,3 +74,21 @@ column = 80
 type = "CONDITIONALS_NEGATION"
 code = "if _, err := tx.Exec(\"PRAGMA user_version = \" + strconv.Itoa(len(ms))); err != nil {"
 reason = "振る舞いの変わらない変異ではなく、テストの通らない経路。err == nil にすると、書き込めたときに、すぐ後の return nil より先に nil を返すだけになる。書き込めなかったときは、続く return nil で誤りを捨てる。移行の番号を整数で書く PRAGMA が、書き込みのトランザクションを始めた後に失敗する経路は見つけられていない（推測。わざと失敗させる方法がない）"
+
+[[exclusion]]
+file = "internal/ops/ops.go"
+line = 102
+column = 43
+type = "INVERT_LOGICAL"
+status = "LIVED"
+code = "if t, err = tx.FindTask(id); err != nil || t == nil {"
+reason = "|| を && にすると、タスクが見つからない（t が nil で err も nil）とき、すぐに戻らず、その ID のイベントを読みに行く。イベントは空で返り、その後の t == nil の確かめで NotFound になるので、振る舞いは変わらない"
+
+[[exclusion]]
+file = "internal/cli/cli.go"
+line = 403
+column = 16
+type = "INVERT_LOGICAL"
+status = "LIVED"
+code = "if err != nil && w.err == nil {"
+reason = "&& を || にすると、書き込みの誤りを覚えるのが「最初の誤り」から「最後の誤り」に変わる（誤りがないときは nil を入れ直すだけ）。どちらでも、誤りがあれば internal_error になり、変わるのは説明の文の中の誤りの文言だけ"
