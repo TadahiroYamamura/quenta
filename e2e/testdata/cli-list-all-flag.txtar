@@ -3,15 +3,15 @@
 env QUENTA_SESSION=session-1
 env XDG_DATA_HOME=$WORK/data
 
-# 作成日時が秒で変わるよう、登録のあいだを 1 秒あける（一覧は作成日時の古い順に並ぶ）
+# 作成日時が秒で変わるよう、登録のあいだを 2 秒あける（一覧は作成日時の古い順に並ぶ。時計の補正で、1 秒の sleep の間に壁時計が 1 秒進まないことがあるため 2 秒）
 exec quenta task add --title 残す
 setjson ID1 task.id
 setjson AT1 task.created_at
-exec sleep 1
+exec sleep 2
 exec quenta task add --title 完了にする
 setjson ID2 task.id
 setjson AT2 task.created_at
-exec sleep 1
+exec sleep 2
 exec quenta task add --title 中止にする
 setjson ID3 task.id
 setjson AT3 task.created_at
