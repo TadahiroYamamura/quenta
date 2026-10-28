@@ -18,7 +18,7 @@ cmpenv stdout show.json
 
 # ID の引数も削らない。前後に空白のある ID は、登録した ID と一致しない
 ! exec quenta task show ' '$ID
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 -- add.json --
 {"task":{"id":"$ID","title":"  前後に空白  ","body":"　本文　","status":"todo","created_at":"$AT"}}

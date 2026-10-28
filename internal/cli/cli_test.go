@@ -36,10 +36,20 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{t: t, env: map[string]string{"QUENTA_SESSION": "s1", "XDG_DATA_HOME": dir, "HOME": filepath.Join(dir, "home")}, now: time.Unix(1_700_000_000, 0), data: filepath.Join(dir, "quenta", "quenta.db"), random: rand.Reader}
 }
 
+// run は、quenta を動かし、終了コードと、出力（成功なら標準出力、失敗なら標準エラー）を返す。成功で標準エラーに、失敗で標準出力に何か書けば落とす
 func (f *fixture) run(args ...string) (int, string) {
-	var out bytes.Buffer
-	code := Run(args, Env{Getenv: func(k string) string { return f.env[k] }, Stdout: &out, Now: func() time.Time { return f.now }, Random: f.random})
-	return code, out.String()
+	var out, errOut bytes.Buffer
+	code := Run(args, Env{Getenv: func(k string) string { return f.env[k] }, Stdout: &out, Stderr: &errOut, Now: func() time.Time { return f.now }, Random: f.random})
+	if code == 0 {
+		if errOut.Len() > 0 {
+			f.t.Fatalf("%v: 成功したのに標準エラーに書いた: %q", args, errOut.String())
+		}
+		return code, out.String()
+	}
+	if out.Len() > 0 {
+		f.t.Fatalf("%v: 失敗したのに標準出力に書いた: %q", args, out.String())
+	}
+	return code, errOut.String()
 }
 
 func (f *fixture) ok(args ...string) map[string]any {
@@ -647,7 +657,7 @@ func Test書き込みをDBの制約が拒むとinternal_errorを返しタスク�
 // @assurance:evidence task-id-format
 func Test本番の乱数で作ったIDは16進の小文字8桁(t *testing.T) {
 	f := newFixture(t)
-	f.random = DefaultEnv(nil, nil).Random // 本番と同じ乱数の元
+	f.random = DefaultEnv(nil, nil, nil).Random // 本番と同じ乱数の元
 	re := regexp.MustCompile(`^[0-9a-f]{8}$`)
 	for range 20 {
 		if id := f.add("t")["id"].(string); !re.MatchString(id) {

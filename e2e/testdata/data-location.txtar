@@ -30,7 +30,7 @@ rm $WORK/home/.local/share/quenta
 # XDG_DATA_HOME が使えず、HOME が空なら internal_error
 env HOME=
 ! exec quenta task list
-stdout '"code":"internal_error"'
+stderr '"code":"internal_error"'
 env HOME=$WORK/home
 
 # 使い方のテキストを返すときと、入力の誤りのときは、データのディレクトリを作らない
@@ -38,31 +38,31 @@ env XDG_DATA_HOME=$WORK/fresh
 exec quenta --help
 ! exists $WORK/fresh/quenta
 ! exec quenta task add --title x --unknown-flag
-stdout '"code":"invalid_argument"'
+stderr '"code":"invalid_argument"'
 ! exists $WORK/fresh/quenta
 ! exec quenta task add --title ''
-stdout '"code":"title_required"'
+stderr '"code":"title_required"'
 ! exists $WORK/fresh/quenta
 ! exec quenta task cancel 0123abcd --reason ''
-stdout '"code":"reason_required"'
+stderr '"code":"reason_required"'
 ! exists $WORK/fresh/quenta
 env QUENTA_SESSION=
 ! exec quenta task list
-stdout '"code":"session_required"'
+stderr '"code":"session_required"'
 ! exists $WORK/fresh/quenta
 env QUENTA_SESSION=session-1
 
 # それ以外は、データのファイルがなければ作る（見つからない ID で not_found になっても作る）。表示・完了・中止のそれぞれで確かめる
 ! exec quenta task show 0123abcd
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 exists $WORK/fresh/quenta/quenta.db
 env XDG_DATA_HOME=$WORK/fresh2
 ! exec quenta task done 0123abcd --reason 済んだ
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 exists $WORK/fresh2/quenta/quenta.db
 env XDG_DATA_HOME=$WORK/fresh3
 ! exec quenta task cancel 0123abcd --reason 要らない
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 exists $WORK/fresh3/quenta/quenta.db
 
 # カレントディレクトリには、最後まで何も作られていない

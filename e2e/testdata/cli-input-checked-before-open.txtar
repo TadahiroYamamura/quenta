@@ -7,18 +7,18 @@ env XDG_DATA_HOME=$WORK/data
 # 主体が空白だけ
 env 'QUENTA_SESSION= 　'
 ! exec quenta task add --title 主体が空白
-stdout '"code":"session_required"'
+stderr '"code":"session_required"'
 ! exists $WORK/data/quenta
 
 # タイトルが空白だけ
 env QUENTA_SESSION=session-1
 ! exec quenta task add --title ' 　	'
-stdout '"code":"title_required"'
+stderr '"code":"title_required"'
 ! exists $WORK/data/quenta
 
 # 理由が空白だけ（タスクがなくても、not_found より先に reason_required になる）
 ! exec quenta task done 0123abcd --reason ' 　'
-stdout '"code":"reason_required"'
+stderr '"code":"reason_required"'
 ! exists $WORK/data/quenta
 
 # 空白でない文字を 1 つでも含めば、データのファイルを開いて登録する

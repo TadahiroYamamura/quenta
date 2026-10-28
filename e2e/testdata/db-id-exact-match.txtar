@@ -12,25 +12,25 @@ stdout '"title":"探す"'
 
 # 空の ID
 ! exec quenta task show ''
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 # 登録した ID の後ろに 1 文字足したもの（9 桁）
 ! exec quenta task show ${ID}0
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 # 16 進でない文字を含む ID
 ! exec quenta task show zzzzzzzz
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 # 大文字を含む ID
 ! exec quenta task show 0123ABCD
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 # 完了・中止でも、一致しない ID は見つからない
 ! exec quenta task done ${ID}0 --reason 済んだ
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 ! exec quenta task cancel '' --reason 要らない
-stdout '"code":"not_found"'
+stderr '"code":"not_found"'
 
 # 完了でも、文字どおりに一致する ID なら見つかる
 exec quenta task done $ID --reason 済んだ

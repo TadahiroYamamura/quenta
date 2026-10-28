@@ -5,7 +5,7 @@ env XDG_DATA_HOME=$WORK/data
 # QUENTA_SESSION がない（台本の始めには設定していない）。エージェント固有の環境変数だけがあっても読まない
 env CLAUDE_CODE_SESSION_ID=claude-1
 ! exec quenta task add --title 主体なし
-stdout '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
 
 # 前後に空白のある値は、そのまま主体になる
 env 'QUENTA_SESSION= session 1 '

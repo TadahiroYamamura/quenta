@@ -5,11 +5,11 @@ env XDG_DATA_HOME=$WORK/data
 
 # --title を省く
 ! exec quenta task add --body 本文だけ
-stdout '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
 
 # --title を値なしで最後に置く
 ! exec quenta task add --body 本文 --title
-stdout '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
 
 # どちらも登録されていない
 exec quenta task list --all

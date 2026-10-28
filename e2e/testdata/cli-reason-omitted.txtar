@@ -10,11 +10,11 @@ setjson AT task.created_at
 
 # 完了で --reason を省く
 ! exec quenta task done $ID
-stdout '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
 
 # 中止で --reason を値なしで最後に置く
 ! exec quenta task cancel $ID --reason
-stdout '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
 
 # タスクは todo のままで、イベントは登録の 1 件だけ
 exec quenta task show $ID

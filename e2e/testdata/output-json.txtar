@@ -1,19 +1,21 @@
 # @assurance:evidence output-json
-# 出力は JSON。失敗したときも JSON でエラーコードを返し、終了コードは 0 以外になる。ただし、--help か -h を指定したときと、quenta・quenta task をサブコマンドなしで起動したときは、使い方のテキストを返し、終了コードは 0 になる
+# 出力は JSON。成功したときは標準出力に JSON を書く。失敗したときは標準エラーに JSON でエラーコードを書き、標準出力には何も書かず、終了コードは 0 以外になる。ただし、--help か -h を指定したときと、quenta・quenta task をサブコマンドなしで起動したときは、使い方のテキストを標準出力に返し、終了コードは 0 になる
 env QUENTA_SESSION=session-1
 env XDG_DATA_HOME=$WORK/data
 
-# 成功すると JSON を返し、終了コードは 0
+# 成功すると標準出力に JSON を返し、標準エラーには何も書かず、終了コードは 0
 exec quenta task add --title 出力
 stdout '^\{"task":\{.*\}\}$'
+! stderr .
 exec quenta task list
 stdout '^\{"tasks":\[.*\]\}$'
 
-# 失敗すると JSON でエラーコードを返し、終了コードは 0 以外（! は、0 以外で終わることを求める）
+# 失敗すると標準エラーに JSON でエラーコードを返し、標準出力には何も書かず、終了コードは 0 以外（! は、0 以外で終わることを求める）
 ! exec quenta task add --title ''
-stdout '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"title_required","message":"[^"]+"\}\}$'
+! stdout .
 ! exec quenta task add --title x --unknown-flag
-stdout '^\{"error":\{"code":"invalid_argument","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"invalid_argument","message":"[^"]+"\}\}$'
 
 # 使い方のテキストを返し、終了コードは 0。JSON ではない
 exec quenta --help

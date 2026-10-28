@@ -66,14 +66,15 @@ func codeOf(f task.Failure) Code {
 // Env は、コマンドが読む環境
 type Env struct {
 	Getenv func(string) string
-	Stdout io.Writer
+	Stdout io.Writer // 成功の JSON と、使い方のテキスト
+	Stderr io.Writer // 失敗の JSON
 	Now    func() time.Time
 	Random io.Reader
 }
 
 // DefaultEnv は、OS の環境
-func DefaultEnv(getenv func(string) string, stdout io.Writer) Env {
-	return Env{Getenv: getenv, Stdout: stdout, Now: time.Now, Random: rand.Reader}
+func DefaultEnv(getenv func(string) string, stdout, stderr io.Writer) Env {
+	return Env{Getenv: getenv, Stdout: stdout, Stderr: stderr, Now: time.Now, Random: rand.Reader}
 }
 
 // Run は、quenta を args（コマンド名を除く）で動かし、終了コードを返す
@@ -105,7 +106,7 @@ func Run(args []string, env Env) int {
 			f = fail(CodeSessionRequired, "QUENTA_SESSION がないか、空白だけ")
 		}
 	}
-	writeJSON(env.Stdout, errorOutput{Error: errorBody{Code: string(f.code), Message: f.message}})
+	writeJSON(env.Stderr, errorOutput{Error: errorBody{Code: string(f.code), Message: f.message}})
 	return 1
 }
 

@@ -5,9 +5,9 @@ env XDG_DATA_HOME=$WORK/data
 
 # タスクが 1 つもない
 ! exec quenta task show 0123abcd
-stdout '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'
 
 # 登録したタスクとは別の ID
 exec quenta task add --title ある
 ! exec quenta task show 0123abcd
-stdout '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'
+stderr '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'
