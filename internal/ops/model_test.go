@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TadahiroYamamura/quenta/internal/oracle"
@@ -17,7 +18,8 @@ import (
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
 
-// idSource は、ID の材料のバイトを、少ない候補から選んで渡す。ID がわざと重なるようにし、作り直す経路を通すため。渡した ID を記録する
+// idSource は、ID の材料のバイトを渡す。4 回に 1 回は少ない候補から選び、ID をわざと重ねて作り直す経路を通す。
+// ほかは毎回違う値にして、タスクがたまっても登録できるようにする。渡した ID を記録する
 type idSource struct {
 	rnd   *rand.Rand
 	drawn []string
@@ -29,17 +31,27 @@ func (s *idSource) Read(p []byte) (int, error) {
 	if len(p) != 4 {
 		return 0, fmt.Errorf("ID の材料は 4 バイトずつ読む（%d バイト読もうとした）", len(p))
 	}
-	b := idPool[s.rnd.IntN(len(idPool))]
+	var b [4]byte
+	if s.rnd.IntN(4) == 0 {
+		b = idPool[s.rnd.IntN(len(idPool))]
+	} else {
+		v := s.rnd.Uint32()
+		b = [4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+	}
 	copy(p, b[:])
 	s.drawn = append(s.drawn, fmt.Sprintf("%x", b))
 	return 4, nil
 }
 
-// 主体・タイトル・本文・理由の候補。空、空白だけ（いろいろな空白の文字）、前後に空白、空白でない文字を含む
-var texts = []string{"", " ", "\t\n", "\u3000", "\u00a0\u2028", "a", " a ", "セッション", "\u3000x\u3000", "\u200b", "<&>"}
+// 主体・タイトル・本文・理由の候補。空白だけのもの（いろいろな空白の文字）と、空白だけでないもの（前後に空白、空白に見えるが空白でない文字を含む）
+var (
+	blankTexts    = []string{"", " ", "\t\n", "\u3000", "\u00a0\u2028"}
+	nonBlankTexts = []string{"a", " a ", "セッション", "\u3000x\u3000", "\u200b", "<&>"}
+)
 
 type harness struct {
-	t     *testing.T
+	t       *testing.T
+	outcome map[string]int // 操作と結果の組（例: "登録 成功"）ごとに、起きた回数
 	rnd   *rand.Rand
 	ids   *idSource
 	impl  *ops.Ops
@@ -62,7 +74,7 @@ func newHarness(t *testing.T, base, seed uint64) *harness {
 	}
 	t.Cleanup(func() { db.Close() })
 	rnd := rand.New(rand.NewPCG(base, seed))
-	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, now: 1_700_000_000}
+	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, now: 1_700_000_000, outcome: map[string]int{}}
 	h.impl = &ops.Ops{Store: s, Random: h.ids, Now: func() int64 { return h.now }}
 	h.initialState()
 	return h
@@ -108,7 +120,14 @@ func (h *harness) initialState() {
 	h.model = m
 }
 
-func (h *harness) text() string { return texts[h.rnd.IntN(len(texts))] }
+// text は、1 割の見込みで空白だけの候補を、ほかは空白だけでない候補を選ぶ。空白だけの入力の判定は、プロパティベーステストで境界の組み合わせをすべて確かめている。
+// ここでは、操作を成功させて状態を進めた列で、実装とモデルが一致するかを見るため、空白だけの候補を少なくする
+func (h *harness) text() string {
+	if h.rnd.IntN(10) == 0 {
+		return blankTexts[h.rnd.IntN(len(blankTexts))]
+	}
+	return nonBlankTexts[h.rnd.IntN(len(nonBlankTexts))]
+}
 
 // knownID は、登録済みの ID か、どれとも一致しない ID を選ぶ
 func (h *harness) knownID() string {
@@ -133,6 +152,10 @@ func (h *harness) stepAdd() {
 	actor, title, body := h.text(), h.text(), h.text()
 	h.ids.drawn = nil
 	got, err := h.impl.Add(actor, title, body)
+	h.record("登録", err)
+	if len(h.ids.drawn) > 1 {
+		h.outcome["登録 ID の作り直し"]++
+	}
 	if len(h.ids.drawn) == 0 {
 		h.t.Fatalf("実装が ID を 1 つも引かなかった")
 	}
@@ -172,6 +195,7 @@ func (h *harness) stepAdd() {
 func (h *harness) stepFinish(k task.FinishKind) {
 	actor, reason, id := h.text(), h.text(), h.knownID()
 	got, err := h.impl.Finish(actor, id, reason, k)
+	h.record(map[task.FinishKind]string{task.Completing: "完了", task.Canceling: "中止"}[k], err)
 	var want Q.Result
 	if k == task.Completing {
 		want = oracle.M.Complete(h.model, oracle.Str(actor), oracle.Str(id), oracle.Str(reason), oracle.Int(h.now))
@@ -203,6 +227,7 @@ func (h *harness) stepFinish(k task.FinishKind) {
 func (h *harness) stepList() {
 	actor, all := h.text(), h.rnd.IntN(2) == 0
 	got, err := h.impl.List(actor, all)
+	h.record("一覧", err)
 	want := oracle.M.List(h.model, oracle.Str(actor), all)
 	if want.Is_Err() {
 		wf, ferr := oracle.Failure(want.Dtor_error())
@@ -233,6 +258,25 @@ func (h *harness) stepList() {
 	}
 }
 
+var failureNames = map[task.Failure]string{
+	task.SessionRequired: "session_required", task.TitleRequired: "title_required", task.ReasonRequired: "reason_required",
+	task.NotFound: "not_found", task.AlreadyFinished: "already_finished", task.IDTaken: "id_taken",
+}
+
+// record は、操作の結果を数える
+func (h *harness) record(op string, err error) {
+	switch f, ok := failureOf(err); {
+	case err == nil:
+		h.outcome[op+" 成功"]++
+	case ok:
+		h.outcome[op+" "+failureNames[f]]++
+	case errors.Is(err, ops.ErrIDConflict):
+		h.outcome[op+" id_conflict"]++
+	default:
+		h.outcome[op+" そのほか"]++
+	}
+}
+
 // adopt は、モデルの成功の結果を、次の状態にする
 func (h *harness) adopt(r Q.Result) {
 	s, ok := r.Dtor_value().(Q.State)
@@ -258,11 +302,17 @@ func (h *harness) compareState(step int) {
 }
 
 // run は、無作為な操作の列（登録・一覧・完了・中止）を、モデルと実装の両方に送り、1 歩ごとに結果と状態の全体を比べる
-func run(t *testing.T, seeds, steps int) {
+func run(t *testing.T, seeds, steps int) map[string]int {
 	base := oracle.Seed(t)
+	total := map[string]int{}
 	for seed := range seeds {
-		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+		t.Run(fmt.Sprintf("系列=%d", seed), func(t *testing.T) {
 			h := newHarness(t, base, uint64(seed))
+			defer func() {
+				for k, v := range h.outcome {
+					total[k] += v
+				}
+			}()
 			for step := range steps {
 				// 日時は、同じ秒のまま進まないこともあるように進める（作成日時が同じタスクを作るため）
 				h.now += int64(h.rnd.IntN(2))
@@ -280,6 +330,17 @@ func run(t *testing.T, seeds, steps int) {
 			}
 		})
 	}
+	return total
+}
+
+// minOutcomes は、操作の列の全体で、少なくともこれだけ起きることを求める結果の回数。
+// 入力の候補が変わって、成功やエラーの経路を通らなくなったまま、テストが通り続けないようにするため。
+// 回数は、2026-10-28 に計った割合（40 系列 × 60 歩で、登録の成功 約 480、完了・中止の成功 約 140 ずつ、各エラー 40〜260）の、およそ 3 分の 1 から 5 分の 1
+var minOutcomes = map[string]int{
+	"登録 成功": 150, "登録 session_required": 15, "登録 title_required": 15, "登録 ID の作り直し": 10,
+	"完了 成功": 40, "完了 session_required": 10, "完了 reason_required": 15, "完了 not_found": 20, "完了 already_finished": 50,
+	"中止 成功": 40, "中止 session_required": 10, "中止 reason_required": 15, "中止 not_found": 20, "中止 already_finished": 50,
+	"一覧 成功": 150, "一覧 session_required": 15,
 }
 
 // @assurance:evidence task-add-saves-todo
@@ -298,5 +359,16 @@ func run(t *testing.T, seeds, steps int) {
 // @assurance:evidence status-matches-last-event
 // @assurance:evidence db-writes-as-model
 func Test無作為な操作の列で実装の結果と状態がモデルと一致する(t *testing.T) {
-	run(t, 40, 60)
+	got := run(t, 40, 60)
+	t.Logf("結果の回数: %v", got)
+	for k, min := range minOutcomes {
+		if got[k] < min {
+			t.Errorf("%s が %d 回しか起きなかった（%d 回以上起きるはず。入力の候補が偏っていないか見る）", k, got[k], min)
+		}
+	}
+	for k, v := range got {
+		if strings.HasSuffix(k, " そのほか") {
+			t.Errorf("%s: 判定のエラーでない誤りが %d 回起きた", k, v)
+		}
+	}
 }
