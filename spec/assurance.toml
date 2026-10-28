@@ -935,6 +935,16 @@ means = "人のレビュー"
 detail = "GitHub Actions の Linux と macOS の両方で make check（ここに挙げたすべてのテスト）が通ったことを、PO が ③ で結果を見て確かめる"
 
 [[claim]]
+id = "binary-excludes-generated"
+subjects = ["install"]
+statement = "本番のバイナリ（cmd/quenta）は、Dafny から生成したコード（internal/spec の下）も、それを使うテストの補助（internal/oracle）も含まない"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "単体テスト"
+detail = "go list -deps ./cmd/quenta の依存の一覧に、internal/spec の下のパッケージと internal/oracle が入っていれば落ちる"
+
+[[claim]]
 id = "install-with-make"
 subjects = ["install"]
 statement = "Nix の環境で make install を実行すると、$PREFIX/bin/quenta に入る。PREFIX の既定は ~/.local。go install で入れられることは保証しない"
