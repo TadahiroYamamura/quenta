@@ -19,7 +19,7 @@ status = "NOT COVERED"
 column = 31
 type = "ARITHMETIC_BASE"
 code = "Completing FinishKind = iota + 1"
-reason = "道具の誤認。定数の宣言は網羅率の区画に入らないので、Gremlins が「テストが通らない」と出す。手で iota - 1 に壊すと、Completing が 0（知らない値）になり、Test完了か中止かの知らない値ではエラーを返し書き込む内容を作らない が落ちる（2026-10-28 のテストの監査の 2 段目で確かめた）"
+reason = "道具の誤認。定数の宣言は網羅率の区画に入らないので、Gremlins が「テストが通らない」と出す。手で iota - 1 に壊すと、Completing が -1、Canceling が 0 になり、知らない値として渡した 0 が中止として通るので、Test完了か中止かの知らない値ではエラーを返し書き込む内容を作らない が落ちる（2026-10-28 のテストの監査の 2 段目で確かめた）"
 
 [[exclusion]]
 file = "internal/task/task.go"
