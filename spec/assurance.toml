@@ -744,7 +744,7 @@ statement = "データのファイルは、同じ ID のタスクを 2 つ持て
 [[claim.evidence]]
 stage = "実装"
 means = "DB の制約"
-detail = "db/migrations/0001_create_tasks.sql の tasks の主キー"
+detail = "db/migrations/0001_create_tasks.sql の tasks の主キー tasks_id_unique"
 
 [[claim.evidence]]
 stage = "テスト"
@@ -754,17 +754,32 @@ detail = "同じ ID の行を直接入れて拒まれること"
 [[claim]]
 id = "db-finished-unchangeable"
 subjects = ["data-file", "task-status"]
-statement = "データのファイルは、終わった状態のタスクの状態の書き換えを拒む"
+statement = "データのファイルは、終わった状態のタスクの状態を UPDATE で書き換えることを拒む。行の削除や、同じ ID での置き換えは拒まない（実装がそれをしないことは、主張 db-writes-as-model で守る）"
 
 [[claim.evidence]]
 stage = "実装"
 means = "DB の制約"
-detail = "db/migrations/0001_create_tasks.sql のトリガー"
+detail = "db/migrations/0001_create_tasks.sql のトリガー tasks_finished_unchangeable"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
 detail = "終わった行の状態を直接書き換えて拒まれること"
+
+[[claim]]
+id = "db-status-known"
+subjects = ["data-file", "task-status", "event"]
+statement = "データのファイルは、タスクの状態と、イベントの変更前・変更後に、todo・done・canceled 以外の値を持てない（イベントの変更前の「なし」を除く）"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0001_create_tasks.sql の tasks_status_known と events_status_known"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "DB のインターフェースのテスト"
+detail = "知らない状態の値の行を直接入れて拒まれ、エラーコード internal_error になること"
 
 [[claim]]
 id = "db-id-exact-match"
@@ -785,6 +800,11 @@ detail = "db-id-exact-match.txtar"
 id = "db-events-in-record-order"
 subjects = ["data-file", "event"]
 statement = "1 つのタスクのイベントを読み出すと、そのタスクのイベントが、漏れなく、それだけ、記録の順に並ぶ"
+
+[[claim.evidence]]
+stage = "実装"
+means = "DB の制約"
+detail = "db/migrations/0001_create_tasks.sql の events の主キー events_record_order（AUTOINCREMENT）"
 
 [[claim.evidence]]
 stage = "テスト"
@@ -835,7 +855,7 @@ detail = "書き込み中の接続を作って待たせる"
 [[claim]]
 id = "db-constraint-violation"
 subjects = ["data-file", "error-code"]
-statement = "書き込みを、データのファイルの制約（ID の一意、終わったタスクの書き換えの拒否）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
+statement = "書き込みを、データのファイルの制約（ID の一意、終わったタスクの状態の UPDATE の拒否、状態の値）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
 
 [[claim.evidence]]
 stage = "テスト"
