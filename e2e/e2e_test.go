@@ -101,7 +101,7 @@ func setjson(ts *testscript.TestScript, neg bool, args []string) {
 	}
 	s, ok := v.(string)
 	if !ok {
-		s = fmt.Sprint(v)
+		ts.Fatalf("項目 %q の値が文字列でない: %v", args[1], v)
 	}
 	ts.Setenv(args[0], s)
 }

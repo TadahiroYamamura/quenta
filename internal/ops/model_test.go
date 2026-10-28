@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TadahiroYamamura/quenta/internal/oracle"
 	"github.com/TadahiroYamamura/quenta/internal/ops"
+	"github.com/TadahiroYamamura/quenta/internal/oracle"
 	Q "github.com/TadahiroYamamura/quenta/internal/spec/Quenta"
 	_dafny "github.com/TadahiroYamamura/quenta/internal/spec/dafny"
 	"github.com/TadahiroYamamura/quenta/internal/store"
@@ -52,12 +52,12 @@ var (
 type harness struct {
 	t       *testing.T
 	outcome map[string]int // 操作と結果の組（例: "登録 成功"）ごとに、起きた回数
-	rnd   *rand.Rand
-	ids   *idSource
-	impl  *ops.Ops
-	db    *sql.DB
-	model Q.State
-	now   int64
+	rnd     *rand.Rand
+	ids     *idSource
+	impl    *ops.Ops
+	db      *sql.DB
+	model   Q.State
+	now     int64
 }
 
 func newHarness(t *testing.T, base, seed uint64) *harness {

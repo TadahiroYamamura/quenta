@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/TadahiroYamamura/quenta/internal/oracle"
 	"github.com/TadahiroYamamura/quenta/internal/ops"
+	"github.com/TadahiroYamamura/quenta/internal/oracle"
 	"github.com/TadahiroYamamura/quenta/internal/store"
 	"github.com/TadahiroYamamura/quenta/internal/task"
 )
