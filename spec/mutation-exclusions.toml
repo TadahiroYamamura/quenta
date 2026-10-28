@@ -1,26 +1,30 @@
 # 変異テストの除外の一覧。振る舞いの変わらない変異と、道具（Gremlins）がテストの通る箇所を「通らない」と誤る変異を、理由を添えて書く。
 # PO がレビューする（除外が増えると抜け道になるため。CLAUDE.md の「変異テスト」）。
+# status は、Gremlins の結果の種類（LIVED: 生き残った、NOT COVERED: テストが通らないと道具が判断した）。結果の種類が変われば、除外に当たらない
 # code は、その行のソースの文（前後の空白を除く）。ソースが変わって行がずれると、道具が一致しないことを知らせる
 
 [[exclusion]]
 file = "internal/task/task.go"
 line = 51
+status = "NOT COVERED"
 column = 33
 type = "ARITHMETIC_BASE"
 code = "SessionRequired Failure = iota + 1"
-reason = "判定のエラーの種類の値は、互いに比べるだけで、出力にも保存にも使わない。iota - 1 にしても、6 つの値は互いに違うままなので、振る舞いは変わらない"
+reason = "道具の誤認。定数の宣言は網羅率の区画に入らないので、Gremlins が「テストが通らない」と出す。手で iota - 1 に壊すと、TitleRequired が 0（知らない値）になり、Test判定のエラーのすべての種類に説明の文がある が落ちることを確かめた（2026-10-28）"
 
 [[exclusion]]
 file = "internal/task/task.go"
 line = 122
+status = "NOT COVERED"
 column = 31
 type = "ARITHMETIC_BASE"
 code = "Completing FinishKind = iota + 1"
-reason = "完了か中止かの値は、互いに比べるだけで、出力にも保存にも使わない。iota - 1 にしても、2 つの値は互いに違うままなので、振る舞いは変わらない"
+reason = "完了か中止かの値は、互いに比べるだけで、出力にも保存にも使わない。iota - 1 にしても、2 つの値は互いに違うままなので、振る舞いは変わらない（手で壊して、テストがすべて通ることを確かめた）"
 
 [[exclusion]]
 file = "internal/task/task.go"
 line = 162
+status = "NOT COVERED"
 column = 13
 type = "CONDITIONALS_NEGATION"
 code = "case found == nil:"
@@ -29,6 +33,7 @@ reason = "道具の誤認。Go の網羅率は switch の case の式を区画�
 [[exclusion]]
 file = "internal/store/store.go"
 line = 27
+status = "NOT COVERED"
 column = 23
 type = "ARITHMETIC_BASE"
 code = "const BusyTimeout = 5 * time.Second"
@@ -37,22 +42,25 @@ reason = "道具の誤認。定数の宣言は網羅率の区画に入らない�
 [[exclusion]]
 file = "internal/store/store.go"
 line = 85
+status = "NOT COVERED"
 column = 60
 type = "CONDITIONALS_BOUNDARY"
 code = "sort.Slice(ms, func(i, j int) bool { return ms[i].version < ms[j].version })"
-reason = "移行が 1 つしかない間は、並べ替えで比べる組がなく、この比べ方は通らない。2 つ目の移行を足すストーリーで通る"
+reason = "振る舞いの変わらない変異ではなく、テストの通らない経路。移行が 1 つしかない間は、並べ替えで比べる組がなく、この比べ方は通らない。2 つ目の移行を足すストーリーで通る"
 
 [[exclusion]]
 file = "internal/store/store.go"
 line = 85
+status = "NOT COVERED"
 column = 60
 type = "CONDITIONALS_NEGATION"
 code = "sort.Slice(ms, func(i, j int) bool { return ms[i].version < ms[j].version })"
-reason = "移行が 1 つしかない間は、並べ替えで比べる組がなく、この比べ方は通らない。2 つ目の移行を足すストーリーで通る"
+reason = "振る舞いの変わらない変異ではなく、テストの通らない経路。移行が 1 つしかない間は、並べ替えで比べる組がなく、この比べ方は通らない。2 つ目の移行を足すストーリーで通る"
 
 [[exclusion]]
 file = "internal/store/store.go"
 line = 113
+status = "LIVED"
 column = 8
 type = "CONDITIONALS_BOUNDARY"
 code = "if v < len(ms) {"
@@ -61,7 +69,8 @@ reason = "v <= len(ms) にすると、当て済みのデータのファイルを
 [[exclusion]]
 file = "internal/store/store.go"
 line = 114
+status = "LIVED"
 column = 80
 type = "CONDITIONALS_NEGATION"
 code = "if _, err := tx.Exec(\"PRAGMA user_version = \" + strconv.Itoa(len(ms))); err != nil {"
-reason = "err == nil にすると、書き込めたときに、すぐ後の return nil より先に nil を返すだけになる。書き込めなかったときは、続く return nil で誤りを捨てる。移行の番号を整数で書く PRAGMA が、書き込みのトランザクションを始めた後に失敗する経路は見つけられていない（推測。わざと失敗させる方法がない）"
+reason = "振る舞いの変わらない変異ではなく、テストの通らない経路。err == nil にすると、書き込めたときに、すぐ後の return nil より先に nil を返すだけになる。書き込めなかったときは、続く return nil で誤りを捨てる。移行の番号を整数で書く PRAGMA が、書き込みのトランザクションを始めた後に失敗する経路は見つけられていない（推測。わざと失敗させる方法がない）"

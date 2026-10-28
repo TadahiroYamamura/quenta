@@ -3,7 +3,7 @@
 使い方: python3 -I tools/mutation/check.py --root <リポジトリ> <パッケージのディレクトリ>=<結果の JSON> ...
 
 生き残った変異（LIVED）と、テストが通らない変異（NOT COVERED）のうち、除外の一覧にないものが 1 つでもあれば、終了コード 1 で終わる。
-除外の一覧の行で、ソースの文が今の行と一致しないもの、結果に現れないもの（もう要らない除外）も、誤りとして挙げる。
+除外の一覧の行は、場所・変異の種類・結果の種類（status）まで一致したものにだけ当てる。ソースの文が今の行と一致しないもの、結果に現れないもの（もう要らない除外か、結果の種類が変わったもの）も、誤りとして挙げる。
 時間切れ（TIMED OUT）は、テストが変異で止まらなくなったことを捕まえたものとして、殺した変異と同じに扱う。
 """
 
@@ -37,15 +37,15 @@ def main():
             for m in f.get("mutations", []):
                 if m["status"] not in FAILING:
                     continue
-                key = (path, m["line"], m["column"], m["type"])
-                match = [i for i, e in enumerate(exclusions) if (e["file"], e["line"], e["column"], e["type"]) == key]
+                key = (path, m["line"], m["column"], m["type"], m["status"])
+                match = [i for i, e in enumerate(exclusions) if (e["file"], e["line"], e["column"], e["type"], e["status"]) == key]
                 if match:
                     used.update(match)
                 else:
                     errors.append(f"{m['status']} {m['type']} at {path}:{m['line']}:{m['column']}（除外の一覧にない）")
     for i, e in enumerate(exclusions):
         if i not in used:
-            errors.append(f"除外 {e['file']}:{e['line']}:{e['column']} {e['type']} は、結果に現れない（もう要らない除外）")
+            errors.append(f"除外 {e['file']}:{e['line']}:{e['column']} {e['type']} {e['status']} は、結果に現れない（もう要らない除外か、結果の種類が変わった）")
     for e in errors:
         print(e, file=sys.stderr)
     return 1 if errors else 0
