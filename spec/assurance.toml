@@ -890,12 +890,12 @@ detail = "書き込みの途中で失敗させ、何も残らないこと"
 [[claim]]
 id = "internal-error"
 subjects = ["error-code", "data-file", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
-statement = "データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤り（ほかのセッションの書き込みを待ちきれなかった場合を除く。主張 db-busy）なら、エラーコード internal_error を返す。新しい版の quenta が作ったデータのファイルは開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）"
+statement = "データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤り（ほかのセッションの書き込みを待ちきれなかった場合を除く。主張 db-busy）なら、エラーコード internal_error を返す。この quenta の知らない移行が当たったデータのファイル（DB の user_version に持つ移行の番号が、この quenta の知っている最大の番号より大きいもの）は開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "開けない・新しい版のデータのファイル"
+detail = "開けないデータのファイルと、知らない移行の番号のデータのファイル"
 
 [[claim.evidence]]
 stage = "テスト"
