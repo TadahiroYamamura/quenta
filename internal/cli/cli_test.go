@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"io"
+	"regexp"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
@@ -21,20 +23,21 @@ import (
 )
 
 type fixture struct {
-	t    *testing.T
-	env  map[string]string
-	now  time.Time
-	data string
+	t      *testing.T
+	env    map[string]string
+	now    time.Time
+	data   string
+	random io.Reader
 }
 
 func newFixture(t *testing.T) *fixture {
 	dir := t.TempDir()
-	return &fixture{t: t, env: map[string]string{"QUENTA_SESSION": "s1", "XDG_DATA_HOME": dir, "HOME": filepath.Join(dir, "home")}, now: time.Unix(1_700_000_000, 0), data: filepath.Join(dir, "quenta", "quenta.db")}
+	return &fixture{t: t, env: map[string]string{"QUENTA_SESSION": "s1", "XDG_DATA_HOME": dir, "HOME": filepath.Join(dir, "home")}, now: time.Unix(1_700_000_000, 0), data: filepath.Join(dir, "quenta", "quenta.db"), random: rand.Reader}
 }
 
 func (f *fixture) run(args ...string) (int, string) {
 	var out bytes.Buffer
-	code := Run(args, Env{Getenv: func(k string) string { return f.env[k] }, Stdout: &out, Now: func() time.Time { return f.now }, Random: rand.Reader})
+	code := Run(args, Env{Getenv: func(k string) string { return f.env[k] }, Stdout: &out, Now: func() time.Time { return f.now }, Random: f.random})
 	return code, out.String()
 }
 
@@ -563,5 +566,90 @@ func TestXDG_DATA_HOMEが使えなければHOMEの下に置きHOMEもなけれ�
 		}
 		f.env["HOME"] = ""
 		f.code(CodeInternalError, "task", "list")
+	}
+}
+
+func (f *fixture) state() oracle.State {
+	f.t.Helper()
+	db, err := sql.Open("sqlite", "file:"+f.data)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer db.Close()
+	st, err := oracle.ReadState(db)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return st
+}
+
+// @assurance:evidence cli-error-shape
+// @assurance:evidence task-add-retries-on-id-collision
+func TestIDが重なり続けるとid_conflictを返し何も登録しない(t *testing.T) {
+	f := newFixture(t)
+	f.random = bytes.NewReader(bytes.Repeat([]byte{0, 0, 0, 1}, 100))
+	f.add("1 つ目")
+	f.code(CodeIDConflict, "task", "add", "--title", "2 つ目")
+	if st := f.state(); len(st.Tasks) != 1 || len(st.Events) != 1 {
+		t.Fatalf("タスク %d 個、イベント %d 件", len(st.Tasks), len(st.Events))
+	}
+}
+
+// @assurance:evidence cli-error-shape
+// @assurance:evidence db-busy
+func Testほかのセッションの書き込みを待ちきれなければbusy_timeoutを返し何も変えない(t *testing.T) {
+	f := newFixture(t)
+	f.add("t")
+	db, err := sql.Open("sqlite", "file:"+f.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(t.Context(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	f.code(CodeBusyTimeout, "task", "add", "--title", "u")
+	if _, err := conn.ExecContext(t.Context(), "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.state(); len(st.Tasks) != 1 {
+		t.Fatalf("タスクが %d 個", len(st.Tasks))
+	}
+}
+
+// @assurance:evidence db-constraint-violation
+func Test書き込みをDBの制約が拒むとinternal_errorを返しタスクもイベントも変わらない(t *testing.T) {
+	f := newFixture(t)
+	id := f.add("t")["id"].(string)
+	// テストの中でだけ、イベントの書き込みを拒むトリガーを足し、実装の書き込みを DB に拒ませる
+	db, err := sql.Open("sqlite", "file:"+f.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TRIGGER test_reject_events BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'test_reject_events'); END"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	before := f.state()
+	f.code(CodeInternalError, "task", "add", "--title", "u")
+	f.code(CodeInternalError, "task", "done", id, "--reason", "r")
+	if after := f.state(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("中身が変わった\n前: %+v\n後: %+v", before, after)
+	}
+}
+
+// @assurance:evidence task-id-format
+func Test本番の乱数で作ったIDは16進の小文字8桁(t *testing.T) {
+	f := newFixture(t)
+	re := regexp.MustCompile(`^[0-9a-f]{8}$`)
+	for range 20 {
+		if id := f.add("t")["id"].(string); !re.MatchString(id) {
+			t.Fatalf("ID の形が違う: %q", id)
+		}
 	}
 }

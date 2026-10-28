@@ -1,17 +1,15 @@
 # @assurance:evidence cli-list-all-flag
 # --all を指定すると終わったタスクを含める一覧に、省くと含めない一覧になる
+# 一覧の並び（作成日時の順）は、時計を差し替えられる CLI のインターフェースのテスト（cli-list-output）で確かめる。ここでは、どのタスクが含まれるかだけを見る
 env QUENTA_SESSION=session-1
 env XDG_DATA_HOME=$WORK/data
 
-# 作成日時が秒で変わるよう、登録のあいだを 2 秒あける（一覧は作成日時の古い順に並ぶ。時計の補正で、1 秒の sleep の間に壁時計が 1 秒進まないことがあるため 2 秒）
 exec quenta task add --title 残す
 setjson ID1 task.id
 setjson AT1 task.created_at
-exec sleep 2
 exec quenta task add --title 完了にする
 setjson ID2 task.id
 setjson AT2 task.created_at
-exec sleep 2
 exec quenta task add --title 中止にする
 setjson ID3 task.id
 setjson AT3 task.created_at
@@ -22,11 +20,12 @@ exec quenta task cancel $ID3 --reason 要らなくなった
 exec quenta task list
 cmpenv stdout unfinished.json
 
-# --all を指定すると、終わったタスクも含めてすべて
+# --all を指定すると、終わったタスクも含めてすべて（3 つ）
 exec quenta task list --all
-cmpenv stdout all.json
+stdout -count=3 '"id":'
+stdout '\{"id":"'${ID1@R}'","title":"残す","body":"","status":"todo","created_at":"'${AT1@R}'"\}'
+stdout '\{"id":"'${ID2@R}'","title":"完了にする","body":"","status":"done","created_at":"'${AT2@R}'"\}'
+stdout '\{"id":"'${ID3@R}'","title":"中止にする","body":"","status":"canceled","created_at":"'${AT3@R}'"\}'
 
 -- unfinished.json --
 {"tasks":[{"id":"$ID1","title":"残す","body":"","status":"todo","created_at":"$AT1"}]}
--- all.json --
-{"tasks":[{"id":"$ID1","title":"残す","body":"","status":"todo","created_at":"$AT1"},{"id":"$ID2","title":"完了にする","body":"","status":"done","created_at":"$AT2"},{"id":"$ID3","title":"中止にする","body":"","status":"canceled","created_at":"$AT3"}]}

@@ -62,9 +62,50 @@ func newHarness(t *testing.T, seed uint64) *harness {
 	}
 	t.Cleanup(func() { db.Close() })
 	rnd := rand.New(rand.NewPCG(seed, seed))
-	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, model: oracle.M.Empty(), now: 1_700_000_000}
+	h := &harness{t: t, rnd: rnd, ids: &idSource{rnd: rnd}, db: db, now: 1_700_000_000}
 	h.impl = &ops.Ops{Store: s, Random: h.ids, Now: func() int64 { return h.now }}
+	h.initialState()
 	return h
+}
+
+// initialState は、始めの状態を、操作を通さずに DB へ直接作り、モデルにも同じ状態を渡す。
+// 完了・中止の事前条件に関わる状態（タスクがある、終わっている）を、登録の操作に頼らずに作るため。
+// 作る状態は、仕様の不変条件（ID が重ならない、状態が最後のイベントの変更後と一致する）を満たすものだけ
+func (h *harness) initialState() {
+	st := oracle.State{Tasks: []task.Task{}, Events: []task.Event{}}
+	for _, i := range h.rnd.Perm(len(idPool))[:h.rnd.IntN(len(idPool)+1)] {
+		id := fmt.Sprintf("%x", idPool[i])
+		status := task.Statuses[h.rnd.IntN(len(task.Statuses))]
+		at := h.now - int64(h.rnd.IntN(3))
+		st.Tasks = append(st.Tasks, task.Task{ID: id, Title: h.text() + "t", Body: h.text(), Status: status, CreatedAt: at})
+		st.Events = append(st.Events, task.Event{TaskID: id, Actor: "a", To: task.Todo, At: at})
+		if status != task.Todo {
+			from := task.Todo
+			st.Events = append(st.Events, task.Event{TaskID: id, Actor: "a", From: &from, To: status, Reason: "r", At: at})
+		}
+	}
+	for _, t := range st.Tasks {
+		if _, err := h.db.Exec("INSERT INTO tasks VALUES (?, ?, ?, ?, ?)", t.ID, t.Title, t.Body, string(t.Status), t.CreatedAt); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	for _, e := range st.Events {
+		var from any
+		if e.From != nil {
+			from = string(*e.From)
+		}
+		if _, err := h.db.Exec("INSERT INTO events (task_id, actor, from_status, to_status, reason, at) VALUES (?, ?, ?, ?, ?, ?)", e.TaskID, e.Actor, from, string(e.To), e.Reason, e.At); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	m, err := st.Model()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if !oracle.M.Inv(m) {
+		h.t.Fatalf("始めの状態が仕様の不変条件を満たさない: %+v", st)
+	}
+	h.model = m
 }
 
 func (h *harness) text() string { return texts[h.rnd.IntN(len(texts))] }

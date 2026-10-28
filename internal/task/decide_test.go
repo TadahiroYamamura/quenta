@@ -243,7 +243,7 @@ func Test一覧の判定は作成日時が同じタスクを含む集まりで�
 		for _, i := range rnd.Perm(len(ids))[:rnd.IntN(len(ids)+1)] {
 			ts = append(ts, task.Task{ID: ids[i], Title: "t", Status: task.Statuses[rnd.IntN(3)], CreatedAt: rnd.Int64N(3)})
 		}
-		actor := []string{"s", " ", ""}[rnd.IntN(3)]
+		actor := boundaryTexts[rnd.IntN(len(boundaryTexts))]
 		all := rnd.IntN(2) == 0
 		got, err := task.ListDecide(actor, all, ts)
 		mts, terr := oracle.Tasks(ts)

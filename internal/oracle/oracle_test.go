@@ -66,4 +66,23 @@ func Testモデルのエラーのすべての種類が実装の判定のエラ�
 			t.Fatalf("%v が %v に写った（%v）", m, got, err)
 		}
 	}
+	// 仕様の側のすべての値も回す。仕様にエラーを足して写し方を書き忘れると、ここで落ちる
+	n := 0
+	for it := c.AllSingletonConstructors(); ; {
+		v, ok := it()
+		if !ok {
+			break
+		}
+		e, isErr := v.(Q.Error)
+		if !isErr {
+			t.Fatalf("仕様のエラーの値の型が違う: %T", v)
+		}
+		if _, err := Failure(e); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	if n != len(task.Failures) {
+		t.Fatalf("仕様のエラーは %d 種類、実装の判定のエラーは %d 種類", n, len(task.Failures))
+	}
 }

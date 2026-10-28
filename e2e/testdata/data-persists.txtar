@@ -1,19 +1,16 @@
 # @assurance:evidence data-persists
 # 別々に CLI を起動しても、登録したタスクと状態の変更が残っている
-# exec は、毎回 quenta を別のプロセスとして起動する
+# exec は、毎回 quenta を別のプロセスとして起動する。一覧の並びは、ここでは見ない（cli-list-output で確かめる）
 env QUENTA_SESSION=session-1
 env XDG_DATA_HOME=$WORK/data
 
 exec quenta task add --title 残る
 setjson ID1 task.id
 setjson AT1 task.created_at
-# 一覧の並びが作成日時で決まるよう、登録のあいだを 2 秒あける（時計の補正で、1 秒の sleep の間に壁時計が 1 秒進まないことがあるため 2 秒）
-exec sleep 2
 exec quenta task add --title 中止する
 setjson ID2 task.id
 setjson AT2 task.created_at
 exec quenta task cancel $ID2 --reason 要らない
-exec sleep 2
 exec quenta task add --title 完了する
 setjson ID3 task.id
 setjson AT3 task.created_at
@@ -21,7 +18,7 @@ exec quenta task done $ID3 --reason 済んだ
 
 # 別のプロセスで読むと、登録と状態の変更が残っている
 exec quenta task list --all
-cmpenv stdout all.json
-
--- all.json --
-{"tasks":[{"id":"$ID1","title":"残る","body":"","status":"todo","created_at":"$AT1"},{"id":"$ID2","title":"中止する","body":"","status":"canceled","created_at":"$AT2"},{"id":"$ID3","title":"完了する","body":"","status":"done","created_at":"$AT3"}]}
+stdout -count=3 '"id":'
+stdout '\{"id":"'${ID1@R}'","title":"残る","body":"","status":"todo","created_at":"'${AT1@R}'"\}'
+stdout '\{"id":"'${ID2@R}'","title":"中止する","body":"","status":"canceled","created_at":"'${AT2@R}'"\}'
+stdout '\{"id":"'${ID3@R}'","title":"完了する","body":"","status":"done","created_at":"'${AT3@R}'"\}'

@@ -140,3 +140,30 @@ func Test表示は登録したタスクとイベントを返し見つからな�
 		t.Fatalf("ない ID の表示: %v", err)
 	}
 }
+
+func Test実行時の確認はIDか状態がイベントと食い違う書き込みを捕まえる(t *testing.T) {
+	ok := task.AddWrite{Task: task.Task{ID: "a", Status: task.Todo}, Event: task.Event{TaskID: "a", To: task.Todo}}
+	if err := ops.CheckAddWriteForTest(ok); err != nil {
+		t.Fatalf("食い違いのない登録を捕まえた: %v", err)
+	}
+	badID, badStatus := ok, ok
+	badID.Event.TaskID = "b"
+	badStatus.Event.To = task.Done
+	for name, w := range map[string]task.AddWrite{"ID": badID, "状態": badStatus} {
+		if err := ops.CheckAddWriteForTest(w); !errors.Is(err, ops.ErrCheckFailed) {
+			t.Fatalf("登録の%sの食い違いを捕まえなかった: %v", name, err)
+		}
+	}
+	fok := task.FinishWrite{ID: "a", Status: task.Done, Event: task.Event{TaskID: "a", To: task.Done}}
+	if err := ops.CheckFinishWriteForTest(fok); err != nil {
+		t.Fatalf("食い違いのない完了を捕まえた: %v", err)
+	}
+	fID, fStatus := fok, fok
+	fID.Event.TaskID = "b"
+	fStatus.Event.To = task.Canceled
+	for name, w := range map[string]task.FinishWrite{"ID": fID, "状態": fStatus} {
+		if err := ops.CheckFinishWriteForTest(w); !errors.Is(err, ops.ErrCheckFailed) {
+			t.Fatalf("完了の%sの食い違いを捕まえなかった: %v", name, err)
+		}
+	}
+}
