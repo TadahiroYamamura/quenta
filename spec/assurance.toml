@@ -414,6 +414,21 @@ means = "プロパティベーステスト"
 detail = "複数のエラーの条件が当てはまる入力で、返るエラーをモデルと比べる"
 
 [[claim]]
+id = "finished-task-preserved"
+subjects = ["task-status", "task", "task-add", "task-done", "task-cancel"]
+statement = "終わった状態のタスクは、登録・完了・中止のどの操作の後も、同じ値のまま残る"
+
+[[claim.evidence]]
+stage = "計画"
+means = "証明"
+detail = "仕様の証明（操作の前と後の状態を比べる補題）"
+
+[[claim.evidence]]
+stage = "テスト"
+means = "モデルベーステスト"
+detail = "登録・一覧・完了・中止の操作の列を、モデルと実装に送り、1 歩ごとに状態の全体を比べる"
+
+[[claim]]
 id = "status-matches-last-event"
 subjects = ["task-status", "event"]
 statement = "タスクの状態は、そのタスクの、記録の順で最後のイベントの変更後の状態と一致する"
@@ -754,7 +769,7 @@ detail = "同じ ID の行を直接入れて拒まれること"
 [[claim]]
 id = "db-finished-unchangeable"
 subjects = ["data-file", "task-status"]
-statement = "データのファイルは、終わった状態のタスクの状態を UPDATE で書き換えることを拒む。行の削除や、同じ ID での置き換えは拒まない（実装がそれをしないことは、主張 db-writes-as-model で守る）"
+statement = "データのファイルは、終わった状態のタスクの状態を UPDATE で書き換えることを拒む"
 
 [[claim.evidence]]
 stage = "実装"
@@ -779,7 +794,7 @@ detail = "db/migrations/0001_create_tasks.sql の tasks_status_known と events_
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "知らない状態の値の行を直接入れて拒まれ、エラーコード internal_error になること"
+detail = "知らない状態の値の行を直接入れて拒まれること"
 
 [[claim]]
 id = "db-id-exact-match"
@@ -804,7 +819,7 @@ statement = "1 つのタスクのイベントを読み出すと、そのタス�
 [[claim.evidence]]
 stage = "実装"
 means = "DB の制約"
-detail = "db/migrations/0001_create_tasks.sql の events の主キー events_record_order（AUTOINCREMENT）"
+detail = "db/migrations/0001_create_tasks.sql の events の主キー events_record_order（AUTOINCREMENT）。番号を指定せずに入れた行に、記録の順に増える番号を付けることだけを守る。番号を指定した書き込みと、読み出しの並び・漏れは守らない（DB のインターフェースのテストと db-writes-as-model で守る）"
 
 [[claim.evidence]]
 stage = "テスト"
@@ -855,12 +870,12 @@ detail = "書き込み中の接続を作って待たせる"
 [[claim]]
 id = "db-constraint-violation"
 subjects = ["data-file", "error-code"]
-statement = "書き込みを、データのファイルの制約（ID の一意、終わったタスクの状態の UPDATE の拒否、状態の値）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
+statement = "書き込みを、データのファイルの制約（db/migrations/ の移行で作ったどの制約・トリガーでも。例: ID の一意、終わったタスクの状態の UPDATE の拒否、状態の値、空の値の拒否、イベントの番号の一意）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "制約に反する書き込みを起こす"
+detail = "実装の書き込みが制約に拒まれる場面を起こし（同じ ID の行や終わった行を先に DB に入れておく、状態を文字列にする変換をテストの中で差し替えて知らない値を書かせる、など）、internal_error が返り、タスクもイベントも変わらないこと"
 
 [[claim]]
 id = "db-change-atomic"
