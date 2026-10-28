@@ -794,7 +794,7 @@ detail = "db/migrations/0001_create_tasks.sql の tasks_status_known と events_
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "知らない状態の値の行を直接入れて拒まれること"
+detail = "tasks.status・events.from_status・events.to_status のそれぞれに、知らない状態の値の行を直接入れて拒まれること。todo の tasks.status を UPDATE で知らない値にしても拒まれること"
 
 [[claim]]
 id = "db-id-exact-match"
@@ -870,12 +870,12 @@ detail = "書き込み中の接続を作って待たせる"
 [[claim]]
 id = "db-constraint-violation"
 subjects = ["data-file", "error-code"]
-statement = "書き込みを、データのファイルの制約（db/migrations/ の移行で作ったどの制約・トリガーでも。例: ID の一意、終わったタスクの状態の UPDATE の拒否、状態の値、空の値の拒否、イベントの番号の一意）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
+statement = "書き込みを、データのファイルの制約（db/migrations/ の移行で作ったどの制約・トリガーでも。例: ID の一意、終わったタスクの状態の UPDATE の拒否、状態の値、NULL の拒否（NOT NULL）、イベントの番号の一意）が拒んだら、エラーコード internal_error を返す。タスクもイベントも変えない"
 
 [[claim.evidence]]
 stage = "テスト"
 means = "DB のインターフェースのテスト"
-detail = "実装の書き込みが制約に拒まれる場面を起こし（同じ ID の行や終わった行を先に DB に入れておく、状態を文字列にする変換をテストの中で差し替えて知らない値を書かせる、など）、internal_error が返り、タスクもイベントも変わらないこと"
+detail = "実装の書き込みが制約に拒まれる場面を起こし（テストの中で問い合わせを差し替えて「ID は使われていない」「todo」と返させ、すでにある ID や終わった行に書き込ませる。状態を文字列にする変換を差し替えて知らない値を書かせる）、internal_error が返り、タスクもイベントも変わらないこと"
 
 [[claim]]
 id = "db-change-atomic"
