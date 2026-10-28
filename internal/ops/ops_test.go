@@ -1,0 +1,115 @@
+package ops_test
+
+import (
+	"bytes"
+	"crypto/rand"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"regexp"
+	"testing"
+
+	"github.com/TadahiroYamamura/quenta/internal/oracle"
+	"github.com/TadahiroYamamura/quenta/internal/ops"
+	"github.com/TadahiroYamamura/quenta/internal/store"
+	"github.com/TadahiroYamamura/quenta/internal/task"
+)
+
+func newOps(t *testing.T, random *bytes.Reader) (*ops.Ops, *sql.DB) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "quenta.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return &ops.Ops{Store: s, Random: random, Now: func() int64 { return 100 }}, db
+}
+
+// @assurance:evidence task-id-format
+func Test作るIDは16進の小文字8桁で毎回ちがう値になる(t *testing.T) {
+	re := regexp.MustCompile(`^[0-9a-f]{8}$`)
+	seen := map[string]bool{}
+	for range 2000 {
+		id, err := task.NewID(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !re.MatchString(id) {
+			t.Fatalf("ID の形が違う: %q", id)
+		}
+		seen[id] = true
+	}
+	// 2000 個のうち重なるのは、ランダムなら 1 組あるかないか。大きく減るなら、ランダムでない
+	if len(seen) < 1990 {
+		t.Fatalf("2000 個の ID のうち、違う値が %d 個しかない", len(seen))
+	}
+	// 材料のバイトがそのまま 16 進の小文字になる
+	if id, _ := task.NewID(bytes.NewReader([]byte{0xab, 0xcd, 0x01, 0xef})); id != "abcd01ef" {
+		t.Fatalf("材料 abcd01ef から作った ID が %q", id)
+	}
+}
+
+// @assurance:evidence task-add-retries-on-id-collision
+func TestIDが重なったら作り直して登録する(t *testing.T) {
+	// 1 つ目の登録は 00000001。2 つ目は 00000001 が重なり、作り直した 00000002 で登録する
+	o, db := newOps(t, bytes.NewReader([]byte{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2}))
+	if _, err := o.Add("s", "1 つ目", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := o.Add("s", "2 つ目", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "00000002" {
+		t.Fatalf("作り直した ID が %q", got.ID)
+	}
+	st, err := oracle.ReadState(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Tasks) != 2 || len(st.Events) != 2 {
+		t.Fatalf("タスク %d 個、イベント %d 件（2 つずつのはず）", len(st.Tasks), len(st.Events))
+	}
+}
+
+// @assurance:evidence task-add-retries-on-id-collision
+func TestIDが上限の回数まで重なり続けたらid_conflictで何も登録しない(t *testing.T) {
+	b := bytes.Repeat([]byte{0, 0, 0, 1}, ops.MaxIDAttempts+1)
+	o, db := newOps(t, bytes.NewReader(b))
+	if _, err := o.Add("s", "1 つ目", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := o.Add("s", "2 つ目", "")
+	if !errors.Is(err, ops.ErrIDConflict) {
+		t.Fatalf("上限まで重なったのに %v", err)
+	}
+	st, err := oracle.ReadState(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Tasks) != 1 || len(st.Events) != 1 {
+		t.Fatalf("タスク %d 個、イベント %d 件（1 つずつのはず）", len(st.Tasks), len(st.Events))
+	}
+}
+
+// @assurance:evidence task-add-retries-on-id-collision
+func Test上限の回数の手前で重ならなくなれば登録する(t *testing.T) {
+	b := append(bytes.Repeat([]byte{0, 0, 0, 1}, ops.MaxIDAttempts), 0, 0, 0, 2)
+	o, _ := newOps(t, bytes.NewReader(b))
+	if _, err := o.Add("s", "1 つ目", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := o.Add("s", "2 つ目", "")
+	if err != nil {
+		t.Fatalf("上限の回数の最後で重ならなかったのに %v", err)
+	}
+	if got.ID != "00000002" {
+		t.Fatalf("ID が %q", got.ID)
+	}
+}
