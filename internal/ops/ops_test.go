@@ -113,3 +113,29 @@ func Test上限の回数の手前で重ならなくなれば登録する(t *test
 		t.Fatalf("ID が %q", got.ID)
 	}
 }
+
+// @assurance:evidence task-id-format
+func TestIDの材料を読めなければ登録はエラーで何も登録しない(t *testing.T) {
+	o, db := newOps(t, bytes.NewReader([]byte{0, 1}))
+	if _, err := o.Add("s", "t", ""); err == nil {
+		t.Fatal("材料が足りないのに登録できた")
+	}
+	if st, _ := oracle.ReadState(db); len(st.Tasks) != 0 {
+		t.Fatalf("タスクが %d 個", len(st.Tasks))
+	}
+}
+
+func Test表示は登録したタスクとイベントを返し見つからなければNotFoundを返す(t *testing.T) {
+	o, _ := newOps(t, bytes.NewReader([]byte{0, 0, 0, 1}))
+	added, err := o.Add("s", "t", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, es, err := o.Show(added.ID)
+	if err != nil || got != added || len(es) != 1 || es[0].To != task.Todo {
+		t.Fatalf("表示: %+v %+v %v", got, es, err)
+	}
+	if _, _, err := o.Show("ffffffff"); !errors.Is(err, task.NotFound) {
+		t.Fatalf("ない ID の表示: %v", err)
+	}
+}

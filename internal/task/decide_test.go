@@ -280,12 +280,12 @@ func Test一覧の判定は作成日時が同じタスクを含む集まりで�
 // @assurance:evidence task-add-title-required
 // @assurance:evidence finish-reason-required
 func Test空白の文字の判定はすべての文字でモデルと一致する(t *testing.T) {
+	// 空白だけかの判定（IsBlank）は、文字ごとの判定と、空の文字列の扱いを、ほかのテストの境界の文字列で確かめる
 	for r := rune(0); r <= 0x10FFFF; r++ {
 		if 0xD800 <= r && r <= 0xDFFF {
 			continue // サロゲートは文字（Unicode のスカラー値）でない
 		}
-		s := string(r)
-		if task.IsBlank(s) != oracle.M.IsBlank(oracle.Str(s)) {
+		if task.IsWhiteSpace(r) != oracle.M.IsWhiteSpace(_dafny.CodePoint(r)) {
 			t.Fatalf("U+%04X の空白の判定が、実装とモデルで違う", r)
 		}
 	}

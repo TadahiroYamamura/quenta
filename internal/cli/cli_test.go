@@ -471,6 +471,13 @@ func Test成功はJSONで終了コード0失敗はJSONで0以外ヘルプはテ�
 			t.Fatalf("%v: 終了コード %d、出力 %q", args, code, out)
 		}
 	}
+	// --help は、指定したサブコマンドの使い方を返す。知らないサブコマンドなら、quenta の使い方を返す
+	if _, out := f.run("task", "add", "--help"); !strings.Contains(out, "--title") {
+		t.Fatalf("task add --help が登録の使い方でない: %q", out)
+	}
+	if code, out := f.run("frobnicate", "--help"); code != 0 || !strings.Contains(out, "task") {
+		t.Fatalf("知らないサブコマンドの --help: %d %q", code, out)
+	}
 }
 
 // buildQuenta は、quenta をビルドして場所を返す
@@ -542,5 +549,19 @@ func Testタイトルと本文と理由は長さを理由に拒まずOSの引数
 	}
 	if got := run("task", "show", c["id"].(string)); got["events"].([]any)[1].(map[string]any)["reason"] != long {
 		t.Fatal("長い中止の理由が変わった")
+	}
+}
+
+// @assurance:evidence internal-error
+func TestXDG_DATA_HOMEが使えなければHOMEの下に置きHOMEもなければinternal_errorを返す(t *testing.T) {
+	for _, x := range []string{"", "relative/dir"} {
+		f := newFixture(t)
+		f.env["XDG_DATA_HOME"] = x
+		f.ok("task", "list")
+		if _, err := os.Stat(filepath.Join(f.env["HOME"], ".local", "share", "quenta", "quenta.db")); err != nil {
+			t.Fatalf("XDG_DATA_HOME=%q: HOME の下にデータのファイルがない: %v", x, err)
+		}
+		f.env["HOME"] = ""
+		f.code(CodeInternalError, "task", "list")
 	}
 }

@@ -268,7 +268,7 @@ func Testほかの接続が書き込み中なら待ち待ちきれなければEr
 	if !errors.Is(err, store.ErrBusy) {
 		t.Fatalf("待ちきれなかったのに %v", err)
 	}
-	if d := time.Since(start); d < store.BusyTimeout-500*time.Millisecond {
+	if d := time.Since(start); d < store.BusyTimeout-500*time.Millisecond || d < time.Second {
 		t.Fatalf("%v しか待たなかった（%v 待つはず）", d, store.BusyTimeout)
 	}
 	if _, err := conn.ExecContext(t.Context(), "ROLLBACK"); err != nil {
@@ -556,5 +556,32 @@ func Test判定が返した書き込みは同じ中身のモデルの書き込�
 		if got := state(t, raw); !reflect.DeepEqual(got, wantGo) {
 			t.Fatalf("書き込んだ後の中身: 実装 %+v、モデル %+v", got, wantGo)
 		}
+	}
+}
+
+// @assurance:evidence internal-error
+func Test移行を当て済みのデータのファイルは開き直しても移行を当て直さず中身も変わらない(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quenta.db")
+	for i := range 3 {
+		s, err := store.Open(path)
+		if err != nil {
+			t.Fatalf("%d 回目に開くと %v", i+1, err)
+		}
+		if err := s.Write(func(tx *store.Tx) error { return tx.ApplyAdd(addWrite(fmt.Sprintf("%08x", i), "t", "", "a", 0)) }); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var v int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
+		t.Fatalf("移行の番号が %d（%v）", v, err)
+	}
+	if n := len(state(t, raw).Tasks); n != 3 {
+		t.Fatalf("タスクが %d 個", n)
 	}
 }
