@@ -1,0 +1,21 @@
+# @assurance:evidence cli-body-omitted
+# --body を省くと（値なしで最後に置いた場合を含む）、本文は空として渡る
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# --body を省く
+exec quenta task add --title 本文なし
+setjson ID task.id
+setjson AT task.created_at
+cmpenv stdout omitted.json
+
+# --body を値なしで最後に置く
+exec quenta task add --title 値なし --body
+setjson ID task.id
+setjson AT task.created_at
+cmpenv stdout novalue.json
+
+-- omitted.json --
+{"task":{"id":"$ID","title":"本文なし","body":"","status":"todo","created_at":"$AT"}}
+-- novalue.json --
+{"task":{"id":"$ID","title":"値なし","body":"","status":"todo","created_at":"$AT"}}

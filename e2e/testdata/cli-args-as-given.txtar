@@ -1,0 +1,26 @@
+# @assurance:evidence cli-args-as-given
+# --title・--body・--reason の値と、<ID> の引数は、前後の空白も含めてそのまま判定に渡す
+# 空白の文字のすべての種類と、改行を含む値は、CLI のインターフェースのテストで確かめる（台本は 1 行ずつ読むので、引数の中に改行を書けない）。ここでは、半角の空白と全角の空白を使う
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# タイトルと本文は、前後の空白も含めてそのまま入る
+exec quenta task add --title '  前後に空白  ' --body '　本文　'
+setjson ID task.id
+setjson AT task.created_at
+cmpenv stdout add.json
+
+# 理由も、前後の空白も含めてそのまま入る
+exec quenta task done $ID --reason ' 済んだ　'
+exec quenta task show $ID
+setjson DONEAT events.1.at
+cmpenv stdout show.json
+
+# ID の引数も削らない。前後に空白のある ID は、登録した ID と一致しない
+! exec quenta task show ' '$ID
+stdout '"code":"not_found"'
+
+-- add.json --
+{"task":{"id":"$ID","title":"  前後に空白  ","body":"　本文　","status":"todo","created_at":"$AT"}}
+-- show.json --
+{"task":{"id":"$ID","title":"  前後に空白  ","body":"　本文　","status":"done","created_at":"$AT"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":"","at":"$AT"},{"actor":"session-1","from":"todo","to":"done","reason":" 済んだ　","at":"$DONEAT"}]}

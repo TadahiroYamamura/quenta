@@ -1,0 +1,70 @@
+# @assurance:evidence data-location
+# データは $XDG_DATA_HOME/quenta/（XDG_DATA_HOME が未設定か、空か、絶対パスでなければ ~/.local/share/quenta/）の下にだけ作られ、カレントディレクトリには何も作られない。macOS でも同じ。XDG_DATA_HOME が使えず、HOME もない（または空の）ときは、エラーコード internal_error を返す。使い方のテキストを返すときと、session_required・invalid_argument・title_required・reason_required を返すときは、データのファイルもディレクトリも作らない。それ以外のときは、登録・一覧・表示・完了・中止のどれも、データのファイルがなければ作る
+# testscript は環境変数を消せないので、「未設定」「ない」は「空」で代えて確かめる（主張では、未設定・空・ないを同じに扱う）
+env QUENTA_SESSION=session-1
+env HOME=$WORK/home
+mkdir $WORK/cwd
+cd $WORK/cwd
+
+# XDG_DATA_HOME が絶対パスなら、その下に作る。カレントディレクトリには何も作らない
+env XDG_DATA_HOME=$WORK/xdg
+exec quenta task add --title 置き場所
+exists $WORK/xdg/quenta/quenta.db
+! exists $WORK/home/.local/share/quenta
+exec ls -A $WORK/cwd
+! stdout .
+
+# XDG_DATA_HOME が空なら、~/.local/share/quenta/ に作る
+env XDG_DATA_HOME=
+exec quenta task list
+exists $WORK/home/.local/share/quenta/quenta.db
+rm $WORK/home/.local/share/quenta
+
+# XDG_DATA_HOME が絶対パスでなければ、~/.local/share/quenta/ に作る
+env XDG_DATA_HOME=relative/xdg
+exec quenta task list
+exists $WORK/home/.local/share/quenta/quenta.db
+! exists $WORK/cwd/relative
+rm $WORK/home/.local/share/quenta
+
+# XDG_DATA_HOME が使えず、HOME が空なら internal_error
+env HOME=
+! exec quenta task list
+stdout '"code":"internal_error"'
+env HOME=$WORK/home
+
+# 使い方のテキストを返すときと、入力の誤りのときは、データのディレクトリを作らない
+env XDG_DATA_HOME=$WORK/fresh
+exec quenta --help
+! exists $WORK/fresh/quenta
+! exec quenta task add --title x --unknown-flag
+stdout '"code":"invalid_argument"'
+! exists $WORK/fresh/quenta
+! exec quenta task add --title ''
+stdout '"code":"title_required"'
+! exists $WORK/fresh/quenta
+! exec quenta task cancel 0123abcd --reason ''
+stdout '"code":"reason_required"'
+! exists $WORK/fresh/quenta
+env QUENTA_SESSION=
+! exec quenta task list
+stdout '"code":"session_required"'
+! exists $WORK/fresh/quenta
+env QUENTA_SESSION=session-1
+
+# それ以外は、データのファイルがなければ作る（見つからない ID で not_found になっても作る）。表示・完了・中止のそれぞれで確かめる
+! exec quenta task show 0123abcd
+stdout '"code":"not_found"'
+exists $WORK/fresh/quenta/quenta.db
+env XDG_DATA_HOME=$WORK/fresh2
+! exec quenta task done 0123abcd --reason 済んだ
+stdout '"code":"not_found"'
+exists $WORK/fresh2/quenta/quenta.db
+env XDG_DATA_HOME=$WORK/fresh3
+! exec quenta task cancel 0123abcd --reason 要らない
+stdout '"code":"not_found"'
+exists $WORK/fresh3/quenta/quenta.db
+
+# カレントディレクトリには、最後まで何も作られていない
+exec ls -A $WORK/cwd
+! stdout .

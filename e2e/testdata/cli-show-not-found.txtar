@@ -1,0 +1,13 @@
+# @assurance:evidence cli-show-not-found
+# 表示で、指定した ID のタスクが見つからなければ、エラーコード not_found を返す
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# タスクが 1 つもない
+! exec quenta task show 0123abcd
+stdout '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'
+
+# 登録したタスクとは別の ID
+exec quenta task add --title ある
+! exec quenta task show 0123abcd
+stdout '^\{"error":\{"code":"not_found","message":"[^"]+"\}\}$'

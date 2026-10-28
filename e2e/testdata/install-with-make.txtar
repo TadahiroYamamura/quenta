@@ -1,0 +1,14 @@
+# @assurance:evidence install-with-make
+# Nix の環境で make install を実行すると、$PREFIX/bin/quenta に入る。PREFIX の既定は ~/.local。go install で入れられることは保証しない
+# QUENTA_REPO は、台本を動かすテストが渡すリポジトリの場所。make は Nix の環境のものを使う
+
+# PREFIX を指定すると、$PREFIX/bin/quenta に入り、起動できる
+exec make -C $QUENTA_REPO install PREFIX=$WORK/prefix
+exists $WORK/prefix/bin/quenta
+exec $WORK/prefix/bin/quenta --help
+stdout 'Usage:'
+
+# PREFIX を省くと、~/.local/bin/quenta に入る
+env HOME=$WORK/home
+exec make -C $QUENTA_REPO install
+exists $WORK/home/.local/bin/quenta

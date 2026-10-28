@@ -1,0 +1,26 @@
+# @assurance:evidence cli-input-checked-before-open
+# 主体・タイトル・理由が空白だけかは、データのファイルを開く前にも、モデルの判定と同じ空白の決まりで確かめる。当てはまれば、データのファイルを開かずに、そのエラーコードを返す。当てはまらないときに、データのファイルを開くかどうかは、主張 error-precedence と data-location に従う
+# 空白の文字のすべての種類と、データのファイルがすでにあるときに開かないことは、CLI のインターフェースのテストで確かめる
+# ここでは、半角の空白・全角の空白・タブを使い（台本は 1 行ずつ読むので、引数の中に改行を書けない。改行は CLI のインターフェースのテストで確かめる）、データのファイルがない状態で「開かない」を「作られない」で確かめる
+env XDG_DATA_HOME=$WORK/data
+
+# 主体が空白だけ
+env 'QUENTA_SESSION= 　'
+! exec quenta task add --title 主体が空白
+stdout '"code":"session_required"'
+! exists $WORK/data/quenta
+
+# タイトルが空白だけ
+env QUENTA_SESSION=session-1
+! exec quenta task add --title ' 　	'
+stdout '"code":"title_required"'
+! exists $WORK/data/quenta
+
+# 理由が空白だけ（タスクがなくても、not_found より先に reason_required になる）
+! exec quenta task done 0123abcd --reason ' 　'
+stdout '"code":"reason_required"'
+! exists $WORK/data/quenta
+
+# 空白でない文字を 1 つでも含めば、データのファイルを開いて登録する
+exec quenta task add --title ' 　x　 '
+exists $WORK/data/quenta/quenta.db

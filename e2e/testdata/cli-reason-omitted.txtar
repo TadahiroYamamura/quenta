@@ -1,0 +1,24 @@
+# @assurance:evidence cli-reason-omitted
+# --reason を省くと（値なしで最後に置いた場合を含む）、理由は空として渡り、reason_required になる
+# 完了・中止と、省く・値なしの 4 通りの組み合わせは、CLI のインターフェースのテストで確かめる。ここでは 2 通り
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+exec quenta task add --title 終わらせたい
+setjson ID task.id
+setjson AT task.created_at
+
+# 完了で --reason を省く
+! exec quenta task done $ID
+stdout '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
+
+# 中止で --reason を値なしで最後に置く
+! exec quenta task cancel $ID --reason
+stdout '^\{"error":\{"code":"reason_required","message":"[^"]+"\}\}$'
+
+# タスクは todo のままで、イベントは登録の 1 件だけ
+exec quenta task show $ID
+cmpenv stdout show.json
+
+-- show.json --
+{"task":{"id":"$ID","title":"終わらせたい","body":"","status":"todo","created_at":"$AT"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":"","at":"$AT"}]}

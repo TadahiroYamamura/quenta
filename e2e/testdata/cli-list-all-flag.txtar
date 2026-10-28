@@ -1,0 +1,32 @@
+# @assurance:evidence cli-list-all-flag
+# --all を指定すると終わったタスクを含める一覧に、省くと含めない一覧になる
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# 作成日時が秒で変わるよう、登録のあいだを 1 秒あける（一覧は作成日時の古い順に並ぶ）
+exec quenta task add --title 残す
+setjson ID1 task.id
+setjson AT1 task.created_at
+exec sleep 1
+exec quenta task add --title 完了にする
+setjson ID2 task.id
+setjson AT2 task.created_at
+exec sleep 1
+exec quenta task add --title 中止にする
+setjson ID3 task.id
+setjson AT3 task.created_at
+exec quenta task done $ID2 --reason 済んだ
+exec quenta task cancel $ID3 --reason 要らなくなった
+
+# --all を省くと、終わっていないタスクだけ
+exec quenta task list
+cmpenv stdout unfinished.json
+
+# --all を指定すると、終わったタスクも含めてすべて
+exec quenta task list --all
+cmpenv stdout all.json
+
+-- unfinished.json --
+{"tasks":[{"id":"$ID1","title":"残す","body":"","status":"todo","created_at":"$AT1"}]}
+-- all.json --
+{"tasks":[{"id":"$ID1","title":"残す","body":"","status":"todo","created_at":"$AT1"},{"id":"$ID2","title":"完了にする","body":"","status":"done","created_at":"$AT2"},{"id":"$ID3","title":"中止にする","body":"","status":"canceled","created_at":"$AT3"}]}

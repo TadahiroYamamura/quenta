@@ -1,0 +1,22 @@
+# @assurance:evidence task-show-with-events
+# ID を指定して表示すると、タスクと、そのタスクのイベントを、漏れなく、それだけ、記録の順に返す
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# 2 つのタスクに、それぞれイベントを記録する
+exec quenta task add --title 見る --body 本文
+setjson ID1 task.id
+setjson AT1 task.created_at
+exec quenta task add --title 見ない
+setjson ID2 task.id
+env QUENTA_SESSION=session-2
+exec quenta task done $ID1 --reason 済んだ
+exec quenta task cancel $ID2 --reason 要らない
+
+# 見るタスクのイベント（登録と完了）だけが、記録の順に並ぶ。見ないタスクのイベントは混ざらない
+exec quenta task show $ID1
+setjson DONEAT events.1.at
+cmpenv stdout show.json
+
+-- show.json --
+{"task":{"id":"$ID1","title":"見る","body":"本文","status":"done","created_at":"$AT1"},"events":[{"actor":"session-1","from":null,"to":"todo","reason":"","at":"$AT1"},{"actor":"session-2","from":"todo","to":"done","reason":"済んだ","at":"$DONEAT"}]}

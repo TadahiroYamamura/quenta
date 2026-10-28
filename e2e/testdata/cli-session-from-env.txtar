@@ -1,0 +1,21 @@
+# @assurance:evidence cli-session-from-env
+# 主体には、環境変数 QUENTA_SESSION の値を、前後の空白も含めてそのまま渡す。QUENTA_SESSION がなければ空として渡す。エージェント固有の環境変数は読まない
+env XDG_DATA_HOME=$WORK/data
+
+# QUENTA_SESSION がない（台本の始めには設定していない）。エージェント固有の環境変数だけがあっても読まない
+env CLAUDE_CODE_SESSION_ID=claude-1
+! exec quenta task add --title 主体なし
+stdout '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
+
+# 前後に空白のある値は、そのまま主体になる
+env 'QUENTA_SESSION= session 1 '
+exec quenta task add --title 主体あり
+setjson ID task.id
+setjson AT task.created_at
+exec quenta task done $ID --reason 済んだ
+exec quenta task show $ID
+setjson DONEAT events.1.at
+cmpenv stdout show.json
+
+-- show.json --
+{"task":{"id":"$ID","title":"主体あり","body":"","status":"done","created_at":"$AT"},"events":[{"actor":" session 1 ","from":null,"to":"todo","reason":"","at":"$AT"},{"actor":" session 1 ","from":"todo","to":"done","reason":"済んだ","at":"$DONEAT"}]}

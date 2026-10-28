@@ -1,0 +1,31 @@
+# @assurance:evidence cli-returns-changed-task
+# 登録・完了・中止に成功すると、書き込んだ後のタスク（加わったタスク、変わった後のタスク）を JSON で返す
+env QUENTA_SESSION=session-1
+env XDG_DATA_HOME=$WORK/data
+
+# 登録すると、加わったタスクが返る
+exec quenta task add --title 完了にする --body 本文1
+setjson ID1 task.id
+setjson AT1 task.created_at
+cmpenv stdout add1.json
+exec quenta task add --title 中止にする --body 本文2
+setjson ID2 task.id
+setjson AT2 task.created_at
+cmpenv stdout add2.json
+
+# 完了にすると、変わったタスクが返る
+exec quenta task done $ID1 --reason 済んだ
+cmpenv stdout done.json
+
+# 中止にすると、変わったタスクが返る
+exec quenta task cancel $ID2 --reason 要らない
+cmpenv stdout cancel.json
+
+-- add1.json --
+{"task":{"id":"$ID1","title":"完了にする","body":"本文1","status":"todo","created_at":"$AT1"}}
+-- add2.json --
+{"task":{"id":"$ID2","title":"中止にする","body":"本文2","status":"todo","created_at":"$AT2"}}
+-- done.json --
+{"task":{"id":"$ID1","title":"完了にする","body":"本文1","status":"done","created_at":"$AT1"}}
+-- cancel.json --
+{"task":{"id":"$ID2","title":"中止にする","body":"本文2","status":"canceled","created_at":"$AT2"}}

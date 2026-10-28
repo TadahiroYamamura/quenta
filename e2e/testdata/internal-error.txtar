@@ -1,0 +1,39 @@
+# @assurance:evidence internal-error
+# データのファイルを開けない・読み書きできないなど、quenta が処理を続けられない誤り（ほかのセッションの書き込みを待ちきれなかった場合を除く。主張 db-busy）なら、エラーコード internal_error を返す。新しい版の quenta が作ったデータのファイルは開かず、エラーコード unsupported_data_version を返す。どちらの場合も、タスクもイベントも変えない（書き込みの途中で起きたら、その操作の書き込みをすべて取り消す）
+# 書き込みの途中で起きる場合は、DB のインターフェースのテストで確かめる
+env QUENTA_SESSION=session-1
+
+# データのファイルの場所にディレクトリがあって開けない
+env XDG_DATA_HOME=$WORK/broken
+mkdir $WORK/broken/quenta/quenta.db
+! exec quenta task add --title 開けない
+stdout '^\{"error":\{"code":"internal_error","message":"[^"]+"\}\}$'
+! exec quenta task list
+stdout '"code":"internal_error"'
+! exec quenta task show 0123abcd
+stdout '"code":"internal_error"'
+! exec quenta task done 0123abcd --reason 済んだ
+stdout '"code":"internal_error"'
+! exec quenta task cancel 0123abcd --reason 要らない
+stdout '"code":"internal_error"'
+
+# 新しい版の quenta が作ったデータのファイル（移行の番号が、この版の知らない大きな値）
+env XDG_DATA_HOME=$WORK/newer
+mkdir $WORK/newer/quenta
+exec sqlite3 $WORK/newer/quenta/quenta.db 'PRAGMA user_version = 9999;'
+! exec quenta task add --title 新しい版
+stdout '^\{"error":\{"code":"unsupported_data_version","message":"[^"]+"\}\}$'
+! exec quenta task list
+stdout '"code":"unsupported_data_version"'
+! exec quenta task show 0123abcd
+stdout '"code":"unsupported_data_version"'
+! exec quenta task done 0123abcd --reason 済んだ
+stdout '"code":"unsupported_data_version"'
+! exec quenta task cancel 0123abcd --reason 要らない
+stdout '"code":"unsupported_data_version"'
+
+# データのファイルは変わっていない（移行の番号はそのままで、表もない）
+exec sqlite3 $WORK/newer/quenta/quenta.db 'PRAGMA user_version;'
+stdout '^9999$'
+exec sqlite3 $WORK/newer/quenta/quenta.db '.tables'
+! stdout .

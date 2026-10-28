@@ -1,0 +1,21 @@
+# @assurance:evidence cli-show-session-required
+# QUENTA_SESSION がないか、値が空白だけなら、表示もエラーコード session_required を返す
+env XDG_DATA_HOME=$WORK/data
+
+# QUENTA_SESSION がない（台本の始めには設定していない）。タスクがなくても、not_found より先に session_required になる
+! exec quenta task show 0123abcd
+stdout '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
+
+env QUENTA_SESSION=session-1
+exec quenta task add --title 見たい
+setjson ID task.id
+
+# 値が空白だけ（半角の空白、全角の空白、タブ）
+env 'QUENTA_SESSION= 　	'
+! exec quenta task show $ID
+stdout '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
+
+# 値が空
+env QUENTA_SESSION=
+! exec quenta task show $ID
+stdout '^\{"error":\{"code":"session_required","message":"[^"]+"\}\}$'
