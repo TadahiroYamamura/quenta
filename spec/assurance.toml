@@ -687,7 +687,7 @@ detail = "タスクとイベントの JSON の項目"
 [[claim]]
 id = "invalid-argument"
 subjects = ["error-code", "task-add", "task-list", "task-show", "task-done", "task-cancel"]
-statement = "ID の引数そのものがない、知らないフラグや余分な引数がある、など引数の誤りなら、エラーコード invalid_argument を返す。タスクもイベントも変えない"
+statement = "ID の引数そのものがない、知らないフラグや余分な引数がある、同じフラグを 2 回以上指定した（値なしで最後に置いたものも 1 回と数える）、など引数の誤りなら、エラーコード invalid_argument を返す。タスクもイベントも変えない"
 
 [[claim.evidence]]
 stage = "テスト"
