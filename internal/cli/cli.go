@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -81,12 +82,11 @@ func DefaultEnv(getenv func(string) string, stdout, stderr io.Writer) Env {
 
 // Run は、quenta を args（コマンド名を除く）で動かし、終了コードを返す
 func Run(args []string, env Env) int {
-	repeated := args // 同じフラグを 2 回以上指定したかは、値なしの最後のフラグを省く前の引数で数える
-	args = dropValuelessLastFlag(args)
+	args, dropped := dropValuelessLastFlag(args)
 	// cobra は、使い方を書けなかったことを返さないので、書き込みの誤りを見張る
 	out := &watchedWriter{w: env.Stdout}
 	env.Stdout = out
-	c := &command{env: env}
+	c := &command{env: env, dropped: dropped, counts: map[string]*int{}}
 	root := c.root()
 	root.SetArgs(args)
 	root.SetOut(out)
@@ -106,12 +106,7 @@ func Run(args []string, env Env) int {
 		}
 		return 0
 	}
-	var err error
-	if name, ok := repeatedFlag(repeated); ok {
-		err = fmt.Errorf("%s を 2 回以上指定した", name)
-	} else {
-		err = root.Execute()
-	}
+	err := root.Execute()
 	if err == nil && out.err != nil {
 		err = fail(CodeInternalError, "標準出力に書けない: %v", out.err)
 	}
@@ -137,34 +132,37 @@ func failed(err error, env Env) int {
 }
 
 func hasHelpFlag(args []string) bool {
-	for _, a := range args {
-		if a == "--" {
-			return false
-		}
-		if a == "--help" || a == "-h" {
+	for _, i := range flagPositions(args) {
+		if args[i] == "--help" || args[i] == "-h" {
 			return true
 		}
 	}
 	return false
 }
 
-// repeatedFlag は、-- より前で、同じフラグ（--name と --name=値 の形）を 2 回以上指定していれば、その名前を返す（主張 invalid-argument）
-func repeatedFlag(args []string) (string, bool) {
-	seen := map[string]bool{}
-	for _, a := range args {
+// flagPositions は、-- より前で、- で始まる語の位置を返す。値をとるフラグ（--title など）の次の語は、その値として読み飛ばす（-- で始まる値をフラグと取り違えないため。#28）
+func flagPositions(args []string) []int {
+	var vf []string
+	var ps []int
+	// 添字を進めて値を読み飛ばさず、range と印にしたのは、変異テストが添字の加算を減算に壊すと、ループが止まらずにメモリを食い尽くすため
+	skip := false
+	for i, a := range args {
+		if i == 1 && args[0] == "task" {
+			vf = valueFlags[a] // 2 つ目の語は、サブコマンドの名前
+		}
+		if skip {
+			skip = false // この語は、直前のフラグの値
+			continue
+		}
 		if a == "--" {
 			break
 		}
-		if !strings.HasPrefix(a, "--") {
-			continue
+		if strings.HasPrefix(a, "-") {
+			ps = append(ps, i)
+			skip = slices.Contains(vf, a)
 		}
-		name, _, _ := strings.Cut(a, "=")
-		if seen[name] {
-			return name, true
-		}
-		seen[name] = true
 	}
-	return "", false
+	return ps
 }
 
 // valueFlags は、サブコマンドごとの、値をとるフラグ
@@ -174,21 +172,73 @@ var valueFlags = map[string][]string{
 	"cancel": {"--reason"},
 }
 
-// dropValuelessLastFlag は、そのサブコマンドの値をとるフラグが、値なしで最後に置かれたら、そのフラグを省いたのと同じに扱う（主張 cli-title-omitted など）。
-// そのフラグを持たないサブコマンドや、-- の後に置かれたものは消さない（引数の誤りとして invalid_argument になる。#26）
-func dropValuelessLastFlag(args []string) []string {
+// dropValuelessLastFlag は、そのサブコマンドの値をとるフラグが、値なしで最後に置かれたら、そのフラグを省いたのと同じに扱い（主張 cli-title-omitted など）、省いたフラグの名前を返す。
+// そのフラグを持たないサブコマンドや、-- の後に置かれたものは消さない（引数の誤りとして invalid_argument になる。#26）。ほかのフラグの値になっている語も消さない（#28）
+func dropValuelessLastFlag(args []string) ([]string, string) {
 	n := len(args)
-	if n < 3 || args[0] != "task" || slices.Contains(args[:n-1], "--") {
-		return args
+	if n < 3 || args[0] != "task" {
+		return args, ""
 	}
-	if slices.Contains(valueFlags[args[1]], args[n-1]) {
-		return args[:n-1]
+	ps := flagPositions(args)
+	if len(ps) == 0 || ps[len(ps)-1] != n-1 || !slices.Contains(valueFlags[args[1]], args[n-1]) {
+		return args, ""
 	}
-	return args
+	return args[:n-1], args[n-1]
 }
 
 type command struct {
-	env Env
+	env     Env
+	dropped string          // 値なしで最後に置かれ、省いたフラグの名前
+	counts  map[string]*int // サブコマンドとフラグの名前の組（例: "done --reason"）ごとに、cobra が値を設定した回数
+}
+
+// countedValue は、フラグの値を設定した回数を数える（同じフラグを 2 回以上指定したら invalid_argument にするため。主張 invalid-argument）
+type countedValue struct {
+	set  func(string) error
+	get  func() string
+	typ  string
+	n    *int
+	bool bool
+}
+
+func (v *countedValue) Set(s string) error { *v.n++; return v.set(s) }
+func (v *countedValue) String() string     { return v.get() }
+func (v *countedValue) Type() string       { return v.typ }
+func (v *countedValue) IsBoolFlag() bool   { return v.bool }
+
+func (c *command) stringFlag(cmd *cobra.Command, p *string, name, usage string) {
+	n := new(int)
+	c.counts[cmd.Name()+" --"+name] = n
+	cmd.Flags().Var(&countedValue{set: func(s string) error { *p = s; return nil }, get: func() string { return *p }, typ: "string", n: n}, name, usage)
+}
+
+func (c *command) boolFlag(cmd *cobra.Command, p *bool, name, usage string) {
+	n := new(int)
+	c.counts[cmd.Name()+" --"+name] = n
+	cmd.Flags().Var(&countedValue{set: func(s string) error {
+		b, err := strconv.ParseBool(s)
+		*p = b
+		return err
+	}, get: func() string { return strconv.FormatBool(*p) }, typ: "bool", n: n, bool: true}, name, usage)
+	cmd.Flags().Lookup(name).NoOptDefVal = "true"
+}
+
+// repeatedFlag は、同じフラグを 2 回以上指定していれば invalid_argument を返す。値なしで最後に置いて省いたものも 1 回と数える
+func (c *command) repeatedFlag(cmd *cobra.Command) error {
+	for _, name := range []string{"--title", "--body", "--reason", "--all"} {
+		n := c.counts[cmd.Name()+" "+name]
+		if n == nil {
+			continue
+		}
+		times := *n
+		if c.dropped == name {
+			times++
+		}
+		if times > 1 {
+			return fail(CodeInvalidArgument, "%s を 2 回以上指定した", name)
+		}
+	}
+	return nil
 }
 
 func (c *command) root() *cobra.Command {
@@ -223,6 +273,9 @@ func (c *command) add() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := c.repeatedFlag(cmd); err != nil {
+				return err
+			}
 			if err := validUTF8(map[string]string{"--title": title, "--body": body}); err != nil {
 				return err
 			}
@@ -240,8 +293,8 @@ func (c *command) add() *cobra.Command {
 			return c.output(taskOutput{Task: toTaskJSON(t)})
 		},
 	}
-	cmd.Flags().StringVar(&title, "title", "", "タイトル")
-	cmd.Flags().StringVar(&body, "body", "", "本文（省ける）")
+	c.stringFlag(cmd, &title, "title", "タイトル")
+	c.stringFlag(cmd, &body, "body", "本文（省ける）")
 	return cmd
 }
 
@@ -254,6 +307,9 @@ func (c *command) list() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			actor, err := c.session()
 			if err != nil {
+				return err
+			}
+			if err := c.repeatedFlag(cmd); err != nil {
 				return err
 			}
 			o, closeStore, err := c.open()
@@ -271,7 +327,7 @@ func (c *command) list() *cobra.Command {
 			return c.output(out)
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "終わったタスクも含める")
+	c.boolFlag(cmd, &all, "all", "終わったタスクも含める")
 	return cmd
 }
 
@@ -282,6 +338,9 @@ func (c *command) show() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := c.session(); err != nil {
+				return err
+			}
+			if err := c.repeatedFlag(cmd); err != nil {
 				return err
 			}
 			if err := validUTF8(map[string]string{"<ID>": args[0]}); err != nil {
@@ -323,6 +382,9 @@ func (c *command) finish(name, short string, k task.FinishKind) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := c.repeatedFlag(cmd); err != nil {
+				return err
+			}
 			if err := validUTF8(map[string]string{"<ID>": args[0], "--reason": reason}); err != nil {
 				return err
 			}
@@ -340,7 +402,7 @@ func (c *command) finish(name, short string, k task.FinishKind) *cobra.Command {
 			return c.output(taskOutput{Task: toTaskJSON(t)})
 		},
 	}
-	cmd.Flags().StringVar(&reason, "reason", "", "理由")
+	c.stringFlag(cmd, &reason, "reason", "理由")
 	return cmd
 }
 

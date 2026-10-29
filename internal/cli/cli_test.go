@@ -830,6 +830,25 @@ func Test同じフラグを2回以上指定するとinvalid_argumentで何も変
 	if after := f.state(); !reflect.DeepEqual(after, before) {
 		t.Fatalf("引数の誤りなのに中身が変わった\n前: %+v\n後: %+v", before, after)
 	}
+	// -- で始まる値は、フラグとして数えない（#28）。値がほかのフラグの名前と同じでも、値として渡る
+	a := obj(t, f.ok("task", "add", "--title", "--x", "--body", "--x")["task"])
+	if a["title"] != "--x" || a["body"] != "--x" {
+		t.Fatalf("-- で始まる値が変わった: %v", a)
+	}
+	b := obj(t, f.ok("task", "add", "--title", "--body", "--body", "b")["task"])
+	if b["title"] != "--body" || b["body"] != "b" {
+		t.Fatalf("フラグの名前と同じ値が変わった: %v", b)
+	}
+	c := obj(t, f.ok("task", "add", "--body", "--title", "--title", "t")["task"])
+	if c["title"] != "t" || c["body"] != "--title" {
+		t.Fatalf("フラグの名前と同じ本文が変わった: %v", c)
+	}
+	// 値になっている --help は、使い方の指定として扱わない
+	h := obj(t, f.ok("task", "add", "--title", "--help")["task"])
+	if h["title"] != "--help" {
+		t.Fatalf("値の --help が変わった: %v", h)
+	}
+	before = f.state()
 	// -- の後は位置の引数なので、数えない（余分な位置の引数として invalid_argument）
 	f.code(CodeInvalidArgument, "task", "add", "--title", "t", "--", "--title")
 	// 主体が空白だけなら、session_required が先
