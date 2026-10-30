@@ -498,8 +498,8 @@ type watchedWriter struct {
 
 func (w *watchedWriter) Write(p []byte) (int, error) {
 	n, err := w.w.Write(p)
-	if err != nil && w.err == nil {
-		w.err = err
+	if w.err == nil {
+		w.err = err // 誤りがなければ nil のままで、次の書き込みの誤りを覚える
 	}
 	return n, err
 }

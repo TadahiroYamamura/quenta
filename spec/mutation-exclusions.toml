@@ -83,12 +83,3 @@ type = "INVERT_LOGICAL"
 status = "LIVED"
 code = "if t, err = tx.FindTask(id); err != nil || t == nil {"
 reason = "|| を && にすると、タスクが見つからない（t が nil で err も nil）とき、すぐに戻らず、その ID のイベントを読みに行く。イベントは空で返り、その後の t == nil の確かめで NotFound になるので、振る舞いは変わらない"
-
-[[exclusion]]
-file = "internal/cli/cli.go"
-line = 501
-column = 16
-type = "INVERT_LOGICAL"
-status = "LIVED"
-code = "if err != nil && w.err == nil {"
-reason = "&& を || にすると、書き込みの誤りを覚えるのが「最初の誤り」から「最後の誤り」に変わる（誤りがないときは nil を入れ直すだけ）。どちらでも、誤りがあれば internal_error になり、変わるのは説明の文の中の誤りの文言だけ"
